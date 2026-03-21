@@ -25,7 +25,8 @@ def load_sqlite_to_postgres(sqlite_path: str, postgres_url: str, db_id: str) -> 
     dst_meta = MetaData(schema=schema)
     for table_name, src_table in src_meta.tables.items():
         Table(table_name, dst_meta, *[c.copy() for c in src_table.columns])
-    dst_meta.create_all(bind=dst_engine, checkfirst=True)
+    with dst_engine.begin() as conn:
+        dst_meta.create_all(bind=conn, checkfirst=True)
 
     with src_engine.connect() as src_conn, dst_engine.begin() as dst_conn:
         for table_name, _src_table in src_meta.tables.items():
