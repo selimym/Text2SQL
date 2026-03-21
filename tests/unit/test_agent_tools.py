@@ -124,9 +124,35 @@ def test_execute_sql_tool_success() -> None:
     execute_sql = next(t for t in tools if t.name == "execute_sql")
     result = execute_sql.invoke({"sql": "SELECT * FROM users", "db_id": "mydb"})
 
+    ctx.executor.execute.assert_called_once_with(  # type: ignore[attr-defined]
+        "SELECT * FROM users", "spider_data/database/mydb/mydb.sqlite"
+    )
     parsed = json.loads(result)
     assert parsed["success"] is True
     assert len(parsed["rows"]) == 2
+    assert parsed["column_names"] == ["id", "name"]
+    assert parsed["truncated"] is False
+    assert parsed["error"] is None
+
+
+def test_execute_sql_tool_truncated() -> None:
+    ctx = make_context()
+    ctx.executor.execute.return_value = ExecutionResult(  # type: ignore[attr-defined]
+        success=True,
+        rows=[[1, "Alice"]],
+        column_names=["id", "name"],
+        row_count=1,
+        error="Result truncated",
+    )
+
+    tools = make_tools(ctx)
+    execute_sql = next(t for t in tools if t.name == "execute_sql")
+    result = execute_sql.invoke({"sql": "SELECT * FROM users", "db_id": "mydb"})
+
+    parsed = json.loads(result)
+    assert parsed["success"] is True
+    assert parsed["truncated"] is True
+    assert parsed["error"] is None
 
 
 def test_execute_sql_tool_failure() -> None:
@@ -143,6 +169,7 @@ def test_execute_sql_tool_failure() -> None:
 
     parsed = json.loads(result)
     assert parsed["success"] is False
+    assert parsed["truncated"] is False
     assert parsed["error"] is not None
 
 

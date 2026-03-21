@@ -2,7 +2,7 @@ import json
 from dataclasses import dataclass
 
 from langchain_core.tools import BaseTool, StructuredTool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.db.executor import SQLExecutor
 from app.db.validator import SQLValidator
@@ -20,24 +20,24 @@ class ToolContext:
 
 
 class GetSchemaInput(BaseModel):
-    question: str
-    db_id: str
-    top_k: int = 5
+    question: str = Field(description="The natural language question to retrieve schema for")
+    db_id: str = Field(description="The database identifier")
+    top_k: int = Field(default=5, description="Number of schema documents to retrieve")
 
 
 class GetExamplesInput(BaseModel):
-    question: str
-    db_id: str
-    top_k: int = 3
+    question: str = Field(description="The natural language question to retrieve examples for")
+    db_id: str = Field(description="The database identifier")
+    top_k: int = Field(default=3, description="Number of examples to retrieve")
 
 
 class ValidateSqlInput(BaseModel):
-    sql: str
+    sql: str = Field(description="The SQL query to validate")
 
 
 class ExecuteSqlInput(BaseModel):
-    sql: str
-    db_id: str
+    sql: str = Field(description="The SQL query to execute")
+    db_id: str = Field(description="The database identifier to execute against")
 
 
 def make_tools(context: ToolContext) -> list[BaseTool]:
@@ -64,11 +64,15 @@ def make_tools(context: ToolContext) -> list[BaseTool]:
         """Execute SQL against the database."""
         db_path = f"{context.spider_data_dir}/database/{db_id}/{db_id}.sqlite"
         result = context.executor.execute(sql, db_path)
+        truncated = result.error == "Result truncated"
         return json.dumps(
             {
                 "success": result.success,
                 "rows": result.rows if result.success else [],
-                "error": result.error,
+                "column_names": result.column_names,
+                "row_count": result.row_count,
+                "truncated": truncated,
+                "error": None if truncated else result.error,
             }
         )
 
