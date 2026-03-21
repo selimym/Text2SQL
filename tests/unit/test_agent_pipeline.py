@@ -11,10 +11,18 @@ from app.retrieval.example_retriever import ExampleRetriever
 from app.retrieval.schema_retriever import SchemaRetriever
 
 
-def make_agent_result(sql: str, tool_calls: int = 0) -> dict[str, Any]:
-    """Create a mock agent result with the given SQL and tool call count."""
+def make_agent_result(sql: str, tool_rounds: int = 0) -> dict[str, Any]:
+    """Create a mock agent result with the given SQL and tool call rounds."""
     messages: list[Any] = [HumanMessage(content="question")]
-    for i in range(tool_calls):
+    for i in range(tool_rounds):
+        # Each round: AIMessage with tool_calls + ToolMessage response
+        tool_ai = AIMessage(
+            content="",
+            tool_calls=[
+                {"id": f"call_{i}", "name": "get_schema", "args": {"question": "q", "db_id": "db"}}
+            ],
+        )
+        messages.append(tool_ai)
         messages.append(ToolMessage(content="schema data", tool_call_id=f"call_{i}"))
     messages.append(AIMessage(content=sql))
     return {"messages": messages}
@@ -69,7 +77,7 @@ def test_retry_count_equals_tool_messages(mock_cra: MagicMock) -> None:
 
     sql = "SELECT COUNT(*) FROM singers"
     mock_agent = MagicMock()
-    mock_agent.invoke.return_value = make_agent_result(sql, tool_calls=3)
+    mock_agent.invoke.return_value = make_agent_result(sql, tool_rounds=3)
     mock_cra.return_value = mock_agent
 
     ctx = make_tool_context()
@@ -89,7 +97,7 @@ def test_no_tool_calls(mock_cra: MagicMock) -> None:
 
     sql = "SELECT name FROM artists"
     mock_agent = MagicMock()
-    mock_agent.invoke.return_value = make_agent_result(sql, tool_calls=0)
+    mock_agent.invoke.return_value = make_agent_result(sql, tool_rounds=0)
     mock_cra.return_value = mock_agent
 
     ctx = make_tool_context()
@@ -171,3 +179,57 @@ def test_build_pipeline_agent_returns_agent_pipeline(mock_cra: MagicMock) -> Non
     )
 
     assert isinstance(pipeline, AgentPipeline)
+
+
+@patch("app.pipeline.agent_pipeline.create_react_agent")
+def test_no_sql_generated_returns_flag(mock_cra: MagicMock) -> None:
+    from app.pipeline.agent_pipeline import AgentPipeline
+
+    mock_agent = MagicMock()
+    # Agent returns messages with no final AIMessage without tool_calls
+    messages: list[Any] = [
+        HumanMessage(content="question"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_0", "name": "get_schema", "args": {"question": "q", "db_id": "db"}}
+            ],
+        ),
+        ToolMessage(content="schema data", tool_call_id="call_0"),
+    ]
+    mock_agent.invoke.return_value = {"messages": messages}
+    mock_cra.return_value = mock_agent
+
+    ctx = make_tool_context()
+    llm = MagicMock()
+    pipeline = AgentPipeline(tool_context=ctx, llm=llm, max_iterations=10)
+
+    request = QueryRequest(question="How many singers?", db_id="concert_singer")
+    response = pipeline.run(request)
+
+    assert "no_sql_generated" in response.flags
+    assert response.generated_sql == ""
+    assert response.answer == ""
+
+
+@patch("app.pipeline.agent_pipeline.create_react_agent")
+def test_skips_intermediate_ai_messages_with_tool_calls(mock_cra: MagicMock) -> None:
+    from app.pipeline.agent_pipeline import AgentPipeline
+
+    sql = "SELECT * FROM albums"
+    mock_agent = MagicMock()
+    # 2 tool-call rounds, then a final answer
+    mock_agent.invoke.return_value = make_agent_result(sql, tool_rounds=2)
+    mock_cra.return_value = mock_agent
+
+    ctx = make_tool_context()
+    llm = MagicMock()
+    pipeline = AgentPipeline(tool_context=ctx, llm=llm, max_iterations=10)
+
+    request = QueryRequest(question="List albums?", db_id="concert_singer")
+    response = pipeline.run(request)
+
+    # Intermediate AIMessages with tool_calls should not appear as final SQL
+    assert response.generated_sql == sql
+    # retry_count counts only AIMessages with tool_calls (2 rounds)
+    assert response.retry_count == 2

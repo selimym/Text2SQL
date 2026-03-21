@@ -3,8 +3,7 @@ import time
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, ToolMessage
-from langchain_core.messages import HumanMessage as _HumanMessage  # noqa: F401 - keep for runtime
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: F401
 from langgraph.prebuilt import create_react_agent
 
 from app.api.models import ExecutionMetadata, QueryRequest, QueryResponse
@@ -35,12 +34,10 @@ class AgentPipeline:
         return create_react_agent(self.llm, tools, state_modifier=system_prompt)
 
     def run(self, request: QueryRequest) -> QueryResponse:
-        from langchain_core.messages import HumanMessage
-
         start_ms = time.monotonic() * 1000
 
         human_msg = f"Generate SQL for this question: {request.question}\nDatabase: {request.db_id}"
-        config = {"recursion_limit": self.max_iterations * 3}
+        config = {"recursion_limit": self.max_iterations * 3 + 5}
 
         result = self._agent.invoke(
             {"messages": [HumanMessage(content=human_msg)]},
@@ -57,13 +54,23 @@ class AgentPipeline:
                 raw_sql = str(msg.content).strip()
                 break
 
-        # Strip markdown fences if present
-        raw_sql = re.sub(r"^```(?:sql)?\s*", "", raw_sql, flags=re.IGNORECASE)
-        raw_sql = re.sub(r"\s*```$", "", raw_sql)
+        # Count retry_count = number of LLM tool-call rounds
+        retry_count = sum(1 for msg in messages if isinstance(msg, AIMessage) and msg.tool_calls)
+
+        # Strip all markdown fences (opening and closing)
+        raw_sql = re.sub(r"```(?:sql)?\s*", "", raw_sql, flags=re.IGNORECASE)
+        raw_sql = re.sub(r"```\s*", "", raw_sql)
         raw_sql = raw_sql.strip()
 
-        # Count retry_count = number of tool-call rounds
-        retry_count = sum(1 for msg in messages if isinstance(msg, ToolMessage))
+        if not raw_sql:
+            return QueryResponse(
+                question=request.question,
+                generated_sql="",
+                answer="",
+                flags=["no_sql_generated"],
+                step_timings={"total_ms": total_ms},
+                retry_count=retry_count,
+            )
 
         # Validate and execute once
         validation = self.tool_context.validator.validate(raw_sql)
