@@ -18,9 +18,11 @@ def test_defaults() -> None:
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LANGSMITH_PROJECT", "custom-project")
     s = AppSettings()
     assert s.log_level == "DEBUG"
     assert s.llm_provider == "openai"
+    assert s.langsmith_project == "custom-project"
 
 
 def test_configure_logging_does_not_raise() -> None:
