@@ -94,16 +94,14 @@ def test_pipeline_state_all_keys() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_mocked_services() -> (
-    tuple[
-        SchemaRetriever,
-        ExampleRetriever,
-        PromptAssembler,
-        SQLGenerator,
-        SQLValidator,
-        SQLExecutor,
-    ]
-):
+def _make_mocked_services() -> tuple[
+    SchemaRetriever,
+    ExampleRetriever,
+    PromptAssembler,
+    SQLGenerator,
+    SQLValidator,
+    SQLExecutor,
+]:
     schema_retriever = MagicMock(spec=SchemaRetriever)
     schema_retriever.retrieve.return_value = []
     example_retriever = MagicMock(spec=ExampleRetriever)
