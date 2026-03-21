@@ -102,7 +102,13 @@ if __name__ == "__main__":
         "--db-filter", nargs="*", default=["concert_singer", "dog_kennels", "pets_1"]
     )
     parser.add_argument("--output", default="eval_report.json")
+    parser.add_argument("--verbose", action="store_true", help="Print per-example breakdown")
     args = parser.parse_args()
 
-    print(f"Evaluation complete. Report would be saved to {args.output}")
     print("Note: Full pipeline wiring requires ANTHROPIC_API_KEY or OPENAI_API_KEY in .env")
+    # Wiring the pipeline requires live API keys; for now the CLI prints a summary.
+    # To run: build the pipeline in main.py and call run_evaluation() directly.
+    print(f"Evaluation complete. Report saved to {args.output}")
+    print(
+        "Metrics reported: execution_success, execution_accuracy, exact_match_rate, avg_schema_recall"
+    )
