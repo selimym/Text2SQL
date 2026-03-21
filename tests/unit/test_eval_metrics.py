@@ -1,4 +1,4 @@
-from app.eval.metrics import normalized_exact_match, result_set_match
+from app.eval.metrics import normalized_exact_match, result_set_match, schema_recall
 
 
 def test_identical_rows() -> None:
@@ -39,3 +39,42 @@ def test_collapsed_whitespace() -> None:
 
 def test_different_queries() -> None:
     assert normalized_exact_match("SELECT a FROM t", "SELECT b FROM t") is False
+
+
+def test_full_recall() -> None:
+    assert (
+        schema_recall(
+            gold_sql="SELECT * FROM singer JOIN concert ON singer.id = concert.id",
+            retrieved_tables=["singer", "concert"],
+        )
+        == 1.0
+    )
+
+
+def test_partial_recall() -> None:
+    assert (
+        schema_recall(
+            gold_sql="SELECT * FROM singer JOIN concert ON singer.id = concert.id",
+            retrieved_tables=["singer"],
+        )
+        == 0.5
+    )
+
+
+def test_zero_recall() -> None:
+    assert schema_recall("SELECT * FROM singer", retrieved_tables=["stadium"]) == 0.0
+
+
+def test_no_tables_in_gold_returns_one() -> None:
+    # SELECT 1 has no tables; nothing to retrieve → perfect by definition
+    assert schema_recall("SELECT 1", retrieved_tables=[]) == 1.0
+
+
+def test_alias_resolved() -> None:
+    assert (
+        schema_recall(
+            "SELECT s.name FROM singer AS s",
+            retrieved_tables=["singer"],
+        )
+        == 1.0
+    )
