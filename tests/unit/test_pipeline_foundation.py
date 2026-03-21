@@ -20,13 +20,16 @@ from app.retrieval.schema_retriever import SchemaRetriever
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_state_empty() -> None:
-    state: PipelineState = {}
-    assert state == {}
+def test_pipeline_state_required_request() -> None:
+    request = QueryRequest(question="How many singers?", db_id="concert_singer")
+    state: PipelineState = {"request": request}
+    assert state["request"] is request
 
 
 def test_pipeline_state_partial_keys() -> None:
+    request = QueryRequest(question="How many singers?", db_id="concert_singer")
     state: PipelineState = {
+        "request": request,
         "generated_sql": "SELECT 1",
         "retry_count": 2,
     }
@@ -163,7 +166,7 @@ def test_baseline_pipeline_satisfies_protocol() -> None:
 
 def test_build_pipeline_unknown_variant_raises() -> None:
     sr, er, asm, gen, val, exc = _make_mocked_services()
-    with pytest.raises(NotImplementedError, match="deterministic"):
+    with pytest.raises(NotImplementedError, match="not yet implemented"):
         build_pipeline(
             schema_retriever=sr,
             example_retriever=er,

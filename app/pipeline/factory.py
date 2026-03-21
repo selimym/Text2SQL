@@ -1,4 +1,4 @@
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from app.api.models import QueryRequest, QueryResponse
 from app.db.executor import SQLExecutor
@@ -23,7 +23,7 @@ def build_pipeline(
     validator: SQLValidator,
     executor: SQLExecutor,
     spider_data_dir: str,
-    variant: str = "baseline",
+    variant: Literal["baseline", "deterministic", "agent"] = "baseline",
 ) -> Pipeline:
     if variant == "baseline":
         return BaselinePipeline(

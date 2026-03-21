@@ -7,8 +7,11 @@ from app.db.validator import ValidationResult
 from app.retrieval.example_doc import ExampleDocument
 
 
-class PipelineState(TypedDict, total=False):
+class _PipelineStateRequired(TypedDict):
     request: QueryRequest
+
+
+class PipelineState(_PipelineStateRequired, total=False):
     db_path: str
     schema_docs: list[SchemaDocument]
     example_docs: list[ExampleDocument]
