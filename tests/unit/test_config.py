@@ -9,6 +9,10 @@ def test_defaults() -> None:
     s = AppSettings()
     assert s.log_level == "INFO"
     assert s.max_result_rows == 100
+    assert s.pipeline_variant == "baseline"
+    assert s.max_retries == 2
+    assert s.agent_max_iterations == 10
+    assert s.langsmith_project == "text2sql"
 
 
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:

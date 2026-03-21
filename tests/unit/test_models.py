@@ -26,3 +26,21 @@ def test_error_response_auto_trace_id() -> None:
     err = ErrorResponse(error="something went wrong")
     assert err.trace_id is not None
     uuid.UUID(err.trace_id)
+
+
+def test_query_response_new_fields_default_none() -> None:
+    resp = QueryResponse(question="q", generated_sql="SELECT 1", answer="1")
+    assert resp.step_timings is None
+    assert resp.retry_count is None
+
+
+def test_query_response_new_fields_accept_values() -> None:
+    resp = QueryResponse(
+        question="q",
+        generated_sql="SELECT 1",
+        answer="1",
+        step_timings={"retrieve": 0.1, "generate": 0.5},
+        retry_count=1,
+    )
+    assert resp.step_timings == {"retrieve": 0.1, "generate": 0.5}
+    assert resp.retry_count == 1
