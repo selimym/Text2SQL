@@ -15,6 +15,7 @@ class AppSettings(BaseSettings):
     log_level: str = "INFO"
     max_result_rows: int = 100
     query_timeout_seconds: int = 30
+    postgres_profiler_url: str = "postgresql://text2sql:text2sql@localhost:5433/text2sql_profiler"
 
 
 def get_settings() -> AppSettings:

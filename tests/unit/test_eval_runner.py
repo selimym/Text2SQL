@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy
 
 from app.api.models import ExecutionMetadata, QueryResponse
 from app.eval.runner import run_evaluation
@@ -70,3 +71,70 @@ def test_eval_report_partial_success(spider_dir: str) -> None:
     assert report.total == 2
     assert report.execution_success == 1
     assert report.success_rate == 0.5
+
+
+@pytest.fixture
+def spider_dir_with_db(tmp_path: Path) -> str:
+    """spider_dir fixture that also creates a real SQLite DB for gold execution."""
+    dev_data = [
+        {
+            "db_id": "concert_singer",
+            "question": "How many singers?",
+            "query": "SELECT COUNT(*) FROM singer",
+        }
+    ]
+    (tmp_path / "dev.json").write_text(json.dumps(dev_data))
+    db_dir = tmp_path / "database" / "concert_singer"
+    db_dir.mkdir(parents=True)
+    db_path = db_dir / "concert_singer.sqlite"
+    engine = sqlalchemy.create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        conn.execute(sqlalchemy.text("CREATE TABLE singer (id INTEGER, name TEXT)"))
+        conn.execute(sqlalchemy.text("INSERT INTO singer VALUES (1, 'Alice')"))
+    engine.dispose()
+    return str(tmp_path)
+
+
+@pytest.fixture
+def perfect_pipeline() -> MagicMock:
+    pipeline = MagicMock()
+    pipeline.run.return_value = QueryResponse(
+        question="How many singers?",
+        generated_sql="SELECT COUNT(*) FROM singer",
+        answer="[[1]]",
+        retrieved_schema_summary=["singer"],
+        execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
+    )
+    return pipeline
+
+
+def test_evalreport_has_new_fields(perfect_pipeline: MagicMock, spider_dir_with_db: str) -> None:
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
+    assert hasattr(report, "execution_accuracy")
+    assert hasattr(report, "exact_match_rate")
+    assert hasattr(report, "avg_schema_recall")
+
+
+def test_execution_accuracy_perfect(perfect_pipeline: MagicMock, spider_dir_with_db: str) -> None:
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
+    assert report.execution_accuracy == 1.0
+
+
+def test_exact_match_perfect(perfect_pipeline: MagicMock, spider_dir_with_db: str) -> None:
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
+    assert report.exact_match_rate == 1.0
+
+
+def test_schema_recall_perfect(perfect_pipeline: MagicMock, spider_dir_with_db: str) -> None:
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
+    assert report.avg_schema_recall == 1.0
+
+
+def test_results_contain_per_example_metrics(
+    perfect_pipeline: MagicMock, spider_dir_with_db: str
+) -> None:
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
+    row = report.results[0]
+    assert "execution_accuracy" in row
+    assert "exact_match" in row
+    assert "schema_recall" in row
