@@ -113,13 +113,8 @@ class DeterministicGraphPipeline:
             flags.append(f"retried_{retry_count}_times")
         # Add max_retries_reached flag if we hit the limit
         validation = final_state.get("validation_result")
-        if (
-            validation
-            and not validation.valid
-            and (retry_count or 0) >= self.max_retries
-            or exec_result
-            and not exec_result.success
-            and (retry_count or 0) >= self.max_retries
+        if (validation and not validation.valid and (retry_count or 0) >= self.max_retries) or (
+            exec_result and not exec_result.success and (retry_count or 0) >= self.max_retries
         ):
             flags.append("max_retries_reached")
 

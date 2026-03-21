@@ -340,3 +340,64 @@ def test_step_timings_populated() -> None:
     }
     for key in expected_keys:
         assert key in response.step_timings, f"Missing timing key: {key}"
+
+
+def test_max_retries_reached_execution() -> None:
+    """Execution always fails → after max_retries exhausted, max_retries_reached in flags."""
+    from app.db.executor import SQLExecutor
+    from app.db.schema_doc import SchemaDocument
+    from app.db.validator import SQLValidator
+    from app.llm.generator import SQLGenerator
+    from app.pipeline.assembler import PromptAssembler
+    from app.retrieval.example_doc import ExampleDocument
+    from app.retrieval.example_retriever import ExampleRetriever
+    from app.retrieval.schema_retriever import SchemaRetriever
+
+    schema_doc = SchemaDocument(db_id="test_db", table_name="singers", columns=[], foreign_keys=[])
+    example_doc = ExampleDocument(
+        db_id="test_db", question="How many?", sql="SELECT COUNT(*) FROM t"
+    )
+
+    schema_retriever = MagicMock(spec=SchemaRetriever)
+    schema_retriever.retrieve.return_value = [schema_doc]
+
+    example_retriever = MagicMock(spec=ExampleRetriever)
+    example_retriever.retrieve.return_value = [example_doc]
+
+    assembler = MagicMock(spec=PromptAssembler)
+    assembler.assemble.return_value = "assembled prompt"
+
+    llm = MagicMock()
+    llm_response = MagicMock()
+    llm_response.content = "generation_fault"
+    llm.invoke.return_value = llm_response
+
+    generator = MagicMock(spec=SQLGenerator)
+    generator.generate.return_value = "SELECT bad"
+    generator.llm = llm
+
+    validator = MagicMock(spec=SQLValidator)
+    validator.validate.return_value = ValidationResult(valid=True)
+
+    executor = MagicMock(spec=SQLExecutor)
+    # All execution attempts fail — exhausts the retry budget (max_retries=1 → 2 total attempts)
+    executor.execute.return_value = ExecutionResult(
+        success=False, rows=[], row_count=0, error="no such table"
+    )
+
+    services = NodeServices(
+        schema_retriever=schema_retriever,
+        example_retriever=example_retriever,
+        assembler=assembler,
+        generator=generator,
+        validator=validator,
+        executor=executor,
+        spider_data_dir="spider_data",
+        llm=llm,
+    )
+    pipeline = make_pipeline(services, max_retries=1)
+    request = make_request()
+
+    response = pipeline.run(request)
+
+    assert "max_retries_reached" in response.flags

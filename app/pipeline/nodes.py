@@ -140,7 +140,12 @@ def execute_sql_node(state: PipelineState, services: NodeServices) -> PipelineSt
 def critique_failure_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     execution_result = state.get("execution_result")
-    error_message = (execution_result.error if execution_result else None) or "unknown error"
+    validation_result = state.get("validation_result")
+    error_message = (
+        (execution_result.error if execution_result else None)
+        or (validation_result.error if validation_result else None)
+        or "unknown error"
+    )
 
     classification_prompt = (
         "Classify this SQL generation failure as either 'retrieval_fault' "
