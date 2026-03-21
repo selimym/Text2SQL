@@ -12,7 +12,7 @@ from app.db.executor import SQLExecutor
 from app.db.validator import SQLValidator
 from app.llm.generator import SQLGenerator
 from app.pipeline.assembler import PromptAssembler
-from app.pipeline.baseline import BaselinePipeline
+from app.pipeline.factory import build_pipeline
 from app.retrieval.embeddings import get_embeddings
 from app.retrieval.example_retriever import ExampleRetriever
 from app.retrieval.schema_retriever import SchemaRetriever
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         collection_name="spider_examples",
         chroma_client=chroma_client,
     )
-    pipeline = BaselinePipeline(
+    pipeline = build_pipeline(
         schema_retriever=schema_retriever,
         example_retriever=example_retriever,
         assembler=PromptAssembler(),
@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             timeout_seconds=settings.query_timeout_seconds,
         ),
         spider_data_dir=settings.spider_data_dir,
+        variant=settings.pipeline_variant,
     )
     set_pipeline(pipeline)
     yield

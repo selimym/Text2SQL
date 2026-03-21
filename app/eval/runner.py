@@ -9,7 +9,7 @@ from app.api.models import QueryRequest
 from app.db.executor import SQLExecutor
 from app.eval.loader import load_dev_subset
 from app.eval.metrics import normalized_exact_match, result_set_match, schema_recall
-from app.pipeline.baseline import BaselinePipeline
+from app.pipeline.factory import Pipeline
 
 _log = structlog.get_logger()
 
@@ -27,7 +27,7 @@ class EvalReport:
 
 
 def run_evaluation(
-    pipeline: BaselinePipeline,
+    pipeline: Pipeline,
     spider_data_dir: str,
     db_filter: list[str] | None = None,
     limit: int | None = None,
