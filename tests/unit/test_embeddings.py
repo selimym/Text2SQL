@@ -14,7 +14,7 @@ def test_get_embeddings_openai() -> None:
 
 
 def test_get_embeddings_sentence_transformers() -> None:
-    with patch("app.retrieval.embeddings.HuggingFaceEmbeddings") as mock_cls:
+    with patch("langchain_community.embeddings.HuggingFaceEmbeddings") as mock_cls:
         mock_cls.return_value = MagicMock()
         result = get_embeddings("sentence-transformers", "all-MiniLM-L6-v2")
         mock_cls.assert_called_once_with(model_name="all-MiniLM-L6-v2")

@@ -1,4 +1,3 @@
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.embeddings import Embeddings
 from langchain_openai import OpenAIEmbeddings
 
@@ -8,5 +7,7 @@ def get_embeddings(provider: str, model: str) -> Embeddings:
     if provider == "openai":
         return OpenAIEmbeddings(model=model)
     if provider == "sentence-transformers":
+        from langchain_community.embeddings import HuggingFaceEmbeddings
+
         return HuggingFaceEmbeddings(model_name=model)
     raise ValueError(f"Unsupported embedding provider: {provider!r}")
