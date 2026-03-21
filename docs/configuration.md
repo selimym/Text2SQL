@@ -47,6 +47,27 @@ The ChromaDB directory must exist and be writable. On first run after indexing, 
 |---|---|---|
 | `LOG_LEVEL` | `INFO` | Minimum log level. Options: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
+## Pipeline Variants
+
+| Variable | Default | Description |
+|---|---|---|
+| `PIPELINE_VARIANT` | `baseline` | Which pipeline variant to use. Options: `baseline`, `deterministic`, `agent` |
+| `MAX_RETRIES` | `2` | Maximum repair cycles for the deterministic variant |
+| `AGENT_MAX_ITERATIONS` | `10` | Maximum tool-call rounds for the agent variant |
+| `LANGSMITH_PROJECT` | `text2sql` | LangSmith project name for tracing |
+
+### LangSmith Tracing
+
+LangChain traces all LLM calls automatically when the following variables are set:
+
+```dotenv
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=<your LangSmith key>
+LANGCHAIN_PROJECT=text2sql   # optional; defaults to LANGSMITH_PROJECT setting
+```
+
+The `run_experiment.py` script enables tracing automatically if `LANGCHAIN_API_KEY` is present in the environment.
+
 ## Minimal `.env` to get started
 
 ```dotenv

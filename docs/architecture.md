@@ -117,8 +117,68 @@ If validation fails, the pipeline returns early with a `validation_failed` flag 
 
 **Dependency injection throughout.** `BaselinePipeline` receives all its components via constructor. This makes unit testing straightforward — tests can inject mocks for the LLM, ChromaDB, and executor without standing up real services.
 
-**Deterministic pipeline, no LangGraph.** Milestone A uses a simple linear pipeline. Orchestration frameworks like LangGraph and features like repair loops are planned for later milestones.
+**Pipeline Protocol.** All three variants satisfy the `Pipeline` Protocol defined in `app/pipeline/protocol.py`. This means the API server, eval runner, and experiment runner can work with any variant interchangeably. Select the variant at startup via `PIPELINE_VARIANT`.
 
 **Validation before execution.** SQL is validated before it ever touches a database, preventing syntax errors from reaching the executor and ensuring the system only runs SELECT queries.
 
 **Offline evaluation.** The eval harness runs the full pipeline against the Spider dev set without a live server — it imports `BaselinePipeline` directly. See [spider-dataset.md](spider-dataset.md) for how evaluation works.
+
+## Pipeline Variants
+
+As of Milestone B, the system supports three pipeline variants selectable via `PIPELINE_VARIANT`:
+
+| Variant | Class | Flexibility | Observability | LLM Calls |
+|---|---|---|---|---|
+| `baseline` | `BaselinePipeline` | Fixed 6-step linear | None (no tracing) | 1 per query |
+| `deterministic` | `DeterministicGraphPipeline` | Fixed topology + repair loop | LangSmith + step_timings | 1–3 per query |
+| `agent` | `AgentPipeline` | LLM decides tool usage | LangSmith + retry_count | Dynamic |
+
+**Variant A — Baseline** (`baseline`): A simple linear pipeline defined in `app/pipeline/baseline.py`. Retrieves schema → retrieves examples → assembles prompt → generates SQL → validates → executes. No retry mechanism. The reference implementation.
+
+**Variant B — Deterministic Graph** (`deterministic`): A LangGraph `StateGraph` defined in `app/pipeline/graph_pipeline.py`. Follows the same 6-step sequence as the baseline but adds a critique/repair loop when SQL fails validation or execution.
+
+### Variant B Graph Topology
+
+```
+START
+  └─► retrieve_schema
+       └─► retrieve_examples
+            └─► assemble_prompt ◄──────────────────────────┐
+                 └─► generate_sql                           │ (generation_fault)
+                      └─► validate_sql                      │
+                           ├─[valid]──► execute_sql         │
+                           │             ├─[success]──► build_response ──► END
+                           │             └─[failure]──► critique_failure ─┤
+                           └─[invalid]──► critique_failure  │              │
+                                          ├─[retrieval_fault]►broaden_schema┘
+                                          └─[generation_fault]─────────────┘
+                           (budget exhausted at any point) ──► build_response ──► END
+```
+
+`critique_failure` increments `retry_count` and classifies the failure as either a `retrieval_fault` (wrong/missing schema context) or `generation_fault` (correct schema but wrong SQL logic). The repair loop is bounded by `MAX_RETRIES` (default: 2).
+
+**Variant C — ReAct Agent** (`agent`): A `create_react_agent` from LangGraph prebuilt, defined in `app/pipeline/agent_pipeline.py`. The LLM receives a human message with the question and database ID, then autonomously decides which tools to call and how many times.
+
+### Agent Tools (Variant C)
+
+| Tool | Purpose | Returns |
+|---|---|---|
+| `get_schema` | Retrieve relevant schema for a question | Formatted table/column text |
+| `get_examples` | Retrieve similar SQL examples | Formatted Q→SQL pairs |
+| `validate_sql` | Check SQL syntax | `"valid"` or `"invalid: <reason>"` |
+| `execute_sql` | Run SQL against the database | JSON with `success`, `rows`, `column_names` |
+
+The agent terminates when the LLM responds with only SQL (no tool calls). The final SQL is then validated and executed once by `AgentPipeline.run()` before constructing the `QueryResponse`.
+
+### Running Experiments
+
+Use `scripts/run_experiment.py` to compare all three variants on a Spider subset:
+
+```bash
+uv run python scripts/run_experiment.py \
+  --variants baseline deterministic agent \
+  --limit 20 --db-filter concert_singer \
+  --output experiment_report.json
+```
+
+Enable LangSmith tracing by setting `LANGCHAIN_API_KEY` — the script automatically enables tracing when the key is present.

@@ -18,3 +18,17 @@ def build_user_prompt(
             parts.append(f"Q: {ex.question}\nSQL: {ex.sql}")
     parts.append(f"\n## Question\n{question}\n\nSQL:")
     return "\n\n".join(parts)
+
+
+def build_repair_prompt(
+    question: str,
+    schema_docs: list[SchemaDocument],
+    example_docs: list[ExampleDocument],
+    critique: str,
+) -> str:
+    """Like build_user_prompt but prefixes with the critique context."""
+    critique_section = (
+        f"## Critique\n\n{critique}\n\nPlease fix the SQL based on the critique above."
+    )
+    main_prompt = build_user_prompt(question, schema_docs, example_docs)
+    return critique_section + "\n\n" + main_prompt

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +18,10 @@ class AppSettings(BaseSettings):
     max_result_rows: int = 100
     query_timeout_seconds: int = 30
     postgres_profiler_url: str = "postgresql://text2sql:text2sql@localhost:5433/text2sql_profiler"
+    pipeline_variant: Literal["baseline", "deterministic", "agent"] = "baseline"
+    max_retries: int = 2
+    agent_max_iterations: int = 10
+    langsmith_project: str = "text2sql"
 
 
 def get_settings() -> AppSettings:
