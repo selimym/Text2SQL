@@ -38,4 +38,4 @@ The project is organized by module:
 - **Evaluation:** Spider dataset utilities and offline evaluation runner
 - **API:** FastAPI routes and request/response models
 
-See [CLAUDE.md](CLAUDE.md) for more details on development workflows and conventions.
+See [CLAUDE.md](CLAUDE.md) for development workflows and conventions. Detailed documentation lives in the [`docs/`](docs/) folder.
