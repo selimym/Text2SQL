@@ -379,6 +379,19 @@ def test_critique_failure_node_increments_retry_count_from_zero() -> None:
     assert result["retry_count"] == 1
 
 
+def test_critique_failure_node_updates_step_timings() -> None:
+    from app.pipeline.nodes import critique_failure_node
+
+    state = make_base_state(
+        generated_sql="SELECT 1",
+        execution_result=ExecutionResult(success=False, error="err"),
+    )
+    svc = make_services()
+    result = critique_failure_node(state, svc)
+    assert "critique_failure" in result["step_timings"]
+    assert result["step_timings"]["critique_failure"] >= 0.0
+
+
 # ---------------------------------------------------------------------------
 # broaden_schema_node
 # ---------------------------------------------------------------------------
@@ -408,6 +421,16 @@ def test_broaden_schema_node_replaces_schema_docs() -> None:
     assert result["schema_docs"] == new_docs
 
 
+def test_broaden_schema_node_updates_step_timings() -> None:
+    from app.pipeline.nodes import broaden_schema_node
+
+    state = make_base_state(schema_docs=[make_schema_doc()])
+    svc = make_services()
+    result = broaden_schema_node(state, svc)
+    assert "broaden_schema" in result["step_timings"]
+    assert result["step_timings"]["broaden_schema"] >= 0.0
+
+
 # ---------------------------------------------------------------------------
 # build_response_node
 # ---------------------------------------------------------------------------
@@ -424,3 +447,43 @@ def test_build_response_node_returns_state_unchanged() -> None:
     result = build_response_node(state, svc)
     assert result["generated_sql"] == state["generated_sql"]
     assert result["request"] is state["request"]
+
+
+# ---------------------------------------------------------------------------
+# bind_nodes
+# ---------------------------------------------------------------------------
+
+
+def test_bind_nodes_returns_all_nine_nodes() -> None:
+    from app.pipeline.nodes import bind_nodes
+
+    svc = make_services()
+    bound = bind_nodes(svc)
+    expected_names = {
+        "retrieve_schema",
+        "retrieve_examples",
+        "assemble_prompt",
+        "generate_sql",
+        "validate_sql",
+        "execute_sql",
+        "critique_failure",
+        "broaden_schema",
+        "build_response",
+    }
+    assert set(bound.keys()) == expected_names
+
+
+def test_bind_nodes_callables_accept_only_state() -> None:
+    import inspect
+
+    from app.pipeline.nodes import bind_nodes
+
+    svc = make_services()
+    bound = bind_nodes(svc)
+    for name, fn in bound.items():
+        sig = inspect.signature(fn)
+        # After partial binding, only `state` should remain as a required parameter
+        free_params = [p for p in sig.parameters.values() if p.default is inspect.Parameter.empty]
+        assert (
+            len(free_params) == 1
+        ), f"Node '{name}' has {len(free_params)} free parameters after binding; expected 1"

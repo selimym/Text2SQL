@@ -1,5 +1,16 @@
+"""Pipeline node functions for the LangGraph-based Text2SQL pipeline.
+
+Each node has the signature ``(state: PipelineState, services: NodeServices) -> PipelineState``.
+LangGraph only calls nodes with ``(state)`` or ``(state, config: RunnableConfig)``, so these
+2-argument nodes MUST be registered via ``bind_nodes`` which wraps each one in a
+``functools.partial`` that pre-fills the ``services`` argument.  Never add a node directly to
+the graph without going through ``bind_nodes``.
+"""
+
+import functools
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -127,6 +138,7 @@ def execute_sql_node(state: PipelineState, services: NodeServices) -> PipelineSt
 
 
 def critique_failure_node(state: PipelineState, services: NodeServices) -> PipelineState:
+    start = time.monotonic()
     execution_result = state.get("execution_result")
     error_message = (execution_result.error if execution_result else None) or "unknown error"
 
@@ -154,20 +166,54 @@ def critique_failure_node(state: PipelineState, services: NodeServices) -> Pipel
     )
 
     current_retry = state.get("retry_count") or 0
+    elapsed_ms = (time.monotonic() - start) * 1000
     return _new_state(
         state,
         fault_category=fault_category,
         critique_text=critique_text,
         retry_count=current_retry + 1,
+        step_timings=_merge_timings(state, "critique_failure", elapsed_ms),
     )
 
 
 def broaden_schema_node(state: PipelineState, services: NodeServices) -> PipelineState:
+    start = time.monotonic()
     req = state["request"]
     broader_top_k = req.top_k_schema + 3
     schema_docs = services.schema_retriever.retrieve(req.question, req.db_id, broader_top_k)
-    return _new_state(state, schema_docs=schema_docs)
+    elapsed_ms = (time.monotonic() - start) * 1000
+    return _new_state(
+        state,
+        schema_docs=schema_docs,
+        step_timings=_merge_timings(state, "broaden_schema", elapsed_ms),
+    )
 
 
 def build_response_node(state: PipelineState, services: NodeServices) -> PipelineState:
+    # Terminal node: pipeline extracts QueryResponse from state after graph completes.
     return state
+
+
+def bind_nodes(services: NodeServices) -> dict[str, Callable[[PipelineState], PipelineState]]:
+    """Return a mapping of node name to a bound callable suitable for LangGraph registration.
+
+    LangGraph invokes nodes with ``(state)`` or ``(state, config)``.  Because every node in this
+    module requires ``services``, each one must be wrapped with ``functools.partial`` before being
+    added to the graph.  Using this helper is the only sanctioned way to register nodes; it makes
+    it impossible to accidentally add an unbound 2-argument node directly to the graph.
+    """
+    node_fns: list[tuple[str, Callable[[PipelineState, NodeServices], PipelineState]]] = [
+        ("retrieve_schema", retrieve_schema_node),
+        ("retrieve_examples", retrieve_examples_node),
+        ("assemble_prompt", assemble_prompt_node),
+        ("generate_sql", generate_sql_node),
+        ("validate_sql", validate_sql_node),
+        ("execute_sql", execute_sql_node),
+        ("critique_failure", critique_failure_node),
+        ("broaden_schema", broaden_schema_node),
+        ("build_response", build_response_node),
+    ]
+    return {
+        name: functools.partial(lambda state, fn=fn, svc=services: fn(state, svc))
+        for name, fn in node_fns
+    }
