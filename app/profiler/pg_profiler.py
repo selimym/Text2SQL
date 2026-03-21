@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 import psycopg
+from psycopg import sql as psql
 
 from app.profiler.explain_parser import ExplainResult, parse_explain_output
 from app.profiler.transpiler import sqlite_to_postgres
@@ -43,7 +44,7 @@ def run_explain_analyze(
 
     try:
         with psycopg.connect(postgres_url) as conn, conn.cursor() as cur:
-            cur.execute(f'SET search_path TO "{search_path}"')
+            cur.execute(psql.SQL("SET search_path TO {}").format(psql.Identifier(search_path)))
             cur.execute(f"EXPLAIN ANALYZE {transpiled}")
             rows = cur.fetchall()
         explain_text = "\n".join(r[0] for r in rows)

@@ -3,11 +3,15 @@
 import argparse
 from dataclasses import dataclass
 
+import structlog
+
 from app.api.models import QueryRequest
 from app.db.executor import SQLExecutor
 from app.eval.loader import load_dev_subset
 from app.eval.metrics import normalized_exact_match, result_set_match, schema_recall
 from app.pipeline.baseline import BaselinePipeline
+
+_log = structlog.get_logger()
 
 
 @dataclass
@@ -50,6 +54,12 @@ def run_evaluation(
         # Execute gold SQL to compare result sets
         db_path = f"{spider_data_dir}/database/{ex.db_id}/{ex.db_id}.sqlite"
         gold_result = executor.execute(ex.gold_sql, db_path)
+        if not gold_result.success:
+            _log.warning(
+                "gold_sql execution failed",
+                db_id=ex.db_id,
+                error=gold_result.error,
+            )
         gen_result = executor.execute(resp.generated_sql, db_path) if resp.generated_sql else None
 
         exec_acc = (
