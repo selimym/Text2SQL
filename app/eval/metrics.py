@@ -5,6 +5,9 @@ from collections import Counter
 from typing import Any
 
 import sqlglot
+import structlog
+
+_log = structlog.get_logger()
 
 
 def result_set_match(
@@ -34,11 +37,15 @@ def schema_recall(gold_sql: str, retrieved_tables: list[str]) -> float:
     try:
         for stmt in sqlglot.parse(gold_sql):
             if stmt is not None:
+                cte_aliases: set[str] = set()
+                for cte in stmt.find_all(sqlglot.exp.CTE):
+                    if cte.alias:
+                        cte_aliases.add(cte.alias.lower())
                 for tbl in stmt.find_all(sqlglot.exp.Table):
-                    if tbl.name:
+                    if tbl.name and tbl.name.lower() not in cte_aliases:
                         gold_tables.add(tbl.name.lower())
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.debug("schema_recall: failed to parse gold_sql", error=str(exc))
     if not gold_tables:
         return 1.0
     retrieved_set = {t.lower() for t in retrieved_tables}
