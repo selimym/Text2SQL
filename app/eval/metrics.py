@@ -21,6 +21,6 @@ def normalized_exact_match(generated: str, gold: str) -> bool:
     """Case-insensitive, whitespace-collapsed SQL string comparison."""
 
     def normalize(sql: str) -> str:
-        return re.sub(r"\s+", " ", sql.strip().rstrip(";").lower())
+        return re.sub(r"\s+", " ", sql.strip().rstrip(";").strip().lower())
 
     return normalize(generated) == normalize(gold)
