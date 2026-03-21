@@ -1,4 +1,4 @@
-from app.eval.metrics import result_set_match
+from app.eval.metrics import normalized_exact_match, result_set_match
 
 
 def test_identical_rows() -> None:
@@ -23,3 +23,19 @@ def test_both_empty() -> None:
 
 def test_one_empty() -> None:
     assert result_set_match([], [[1]]) is False
+
+
+def test_case_insensitive() -> None:
+    assert normalized_exact_match("SELECT * FROM t", "select * from t") is True
+
+
+def test_trailing_semicolon() -> None:
+    assert normalized_exact_match("SELECT 1;", "SELECT 1") is True
+
+
+def test_collapsed_whitespace() -> None:
+    assert normalized_exact_match("SELECT   1", "SELECT 1") is True
+
+
+def test_different_queries() -> None:
+    assert normalized_exact_match("SELECT a FROM t", "SELECT b FROM t") is False
