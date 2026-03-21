@@ -1,2 +1,14 @@
 .venv
 .env
+spider_data
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+.chroma/
+*.pdf
