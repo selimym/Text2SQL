@@ -126,7 +126,7 @@ def validate_sql_node(state: PipelineState, services: NodeServices) -> PipelineS
 def execute_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     db_id = state["request"].db_id
-    db_path = os.path.join(services.spider_data_dir, db_id, f"{db_id}.sqlite")
+    db_path = os.path.join(services.spider_data_dir, "database", db_id, f"{db_id}.sqlite")
     generated_sql = state.get("generated_sql") or ""
     execution_result = services.executor.execute(generated_sql, db_path)
     elapsed_ms = (time.monotonic() - start) * 1000
