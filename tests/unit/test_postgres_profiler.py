@@ -1,6 +1,7 @@
 import pytest
 
 from app.profiler.explain_parser import parse_explain_output
+from app.profiler.transpiler import sqlite_to_postgres
 
 SEQ_SCAN = (
     "Seq Scan on singer  (cost=0.00..1.01 rows=1 width=36)"
@@ -41,3 +42,17 @@ def test_missing_times_return_none() -> None:
     result = parse_explain_output("Seq Scan on t (cost=0.00..1.00 rows=1 width=4)")
     assert result.planning_time_ms is None
     assert result.execution_time_ms is None
+
+
+def test_basic_select_unchanged() -> None:
+    assert sqlite_to_postgres("SELECT * FROM singer") == "SELECT * FROM singer"
+
+
+def test_backtick_identifiers_removed() -> None:
+    result = sqlite_to_postgres("SELECT `name` FROM `singer`")
+    assert "`" not in result
+
+
+def test_returns_nonempty_string() -> None:
+    result = sqlite_to_postgres("SELECT COUNT(*) FROM singer WHERE country = 'USA'")
+    assert len(result) > 0
