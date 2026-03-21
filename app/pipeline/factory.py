@@ -32,6 +32,21 @@ def build_pipeline(
             executor=executor,
             spider_data_dir=spider_data_dir,
         )
+    elif variant == "deterministic":
+        from app.pipeline.graph_pipeline import DeterministicGraphPipeline
+        from app.pipeline.nodes import NodeServices
+
+        services = NodeServices(
+            schema_retriever=schema_retriever,
+            example_retriever=example_retriever,
+            assembler=assembler,
+            generator=generator,
+            validator=validator,
+            executor=executor,
+            spider_data_dir=spider_data_dir,
+            llm=generator.llm,
+        )
+        return DeterministicGraphPipeline(services=services, max_retries=2)
     raise NotImplementedError(
         f"Pipeline variant not yet implemented: {variant}. Available: baseline, deterministic, agent"
     )

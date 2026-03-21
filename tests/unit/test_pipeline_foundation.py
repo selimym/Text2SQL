@@ -165,6 +165,25 @@ def test_baseline_pipeline_satisfies_protocol() -> None:
     assert isinstance(pipeline, Pipeline)
 
 
+def test_build_pipeline_deterministic_returns_graph_pipeline() -> None:
+    from app.pipeline.graph_pipeline import DeterministicGraphPipeline
+
+    sr, er, asm, gen, val, exc = _make_mocked_services()
+    # SQLGenerator.llm is an instance attribute; add it to the spec mock
+    gen.llm = MagicMock()
+    pipeline = build_pipeline(
+        schema_retriever=sr,
+        example_retriever=er,
+        assembler=asm,
+        generator=gen,
+        validator=val,
+        executor=exc,
+        spider_data_dir="/data/spider",
+        variant="deterministic",
+    )
+    assert isinstance(pipeline, DeterministicGraphPipeline)
+
+
 def test_build_pipeline_unknown_variant_raises() -> None:
     sr, er, asm, gen, val, exc = _make_mocked_services()
     with pytest.raises(NotImplementedError, match="not yet implemented"):
@@ -176,7 +195,7 @@ def test_build_pipeline_unknown_variant_raises() -> None:
             validator=val,
             executor=exc,
             spider_data_dir="/data/spider",
-            variant="deterministic",
+            variant="agent",
         )
 
 
