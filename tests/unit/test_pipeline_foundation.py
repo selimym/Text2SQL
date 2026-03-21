@@ -195,7 +195,7 @@ def test_build_pipeline_unknown_variant_raises() -> None:
             validator=val,
             executor=exc,
             spider_data_dir="/data/spider",
-            variant="agent",
+            variant="unknown",  # type: ignore[arg-type]
         )
 
 
@@ -210,5 +210,5 @@ def test_build_pipeline_unknown_variant_message_contains_available() -> None:
             validator=val,
             executor=exc,
             spider_data_dir="/data/spider",
-            variant="agent",
+            variant="unknown",  # type: ignore[arg-type]
         )

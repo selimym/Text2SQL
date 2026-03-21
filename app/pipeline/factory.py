@@ -47,6 +47,22 @@ def build_pipeline(
             llm=generator.llm,
         )
         return DeterministicGraphPipeline(services=services, max_retries=2)
+    elif variant == "agent":
+        from app.pipeline.agent_pipeline import AgentPipeline
+        from app.pipeline.agent_tools import ToolContext
+
+        tool_context = ToolContext(
+            schema_retriever=schema_retriever,
+            example_retriever=example_retriever,
+            validator=validator,
+            executor=executor,
+            spider_data_dir=spider_data_dir,
+        )
+        return AgentPipeline(
+            tool_context=tool_context,
+            llm=generator.llm,
+            max_iterations=10,
+        )
     raise NotImplementedError(
         f"Pipeline variant not yet implemented: {variant}. Available: baseline, deterministic, agent"
     )
