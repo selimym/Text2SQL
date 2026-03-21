@@ -1,18 +1,15 @@
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal
 
-from app.api.models import QueryRequest, QueryResponse
 from app.db.executor import SQLExecutor
 from app.db.validator import SQLValidator
 from app.llm.generator import SQLGenerator
 from app.pipeline.assembler import PromptAssembler
 from app.pipeline.baseline import BaselinePipeline
+from app.pipeline.protocol import Pipeline
 from app.retrieval.example_retriever import ExampleRetriever
 from app.retrieval.schema_retriever import SchemaRetriever
 
-
-@runtime_checkable
-class Pipeline(Protocol):
-    def run(self, request: QueryRequest) -> QueryResponse: ...
+__all__ = ["Pipeline", "build_pipeline"]
 
 
 def build_pipeline(

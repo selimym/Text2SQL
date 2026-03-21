@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.models import QueryRequest, QueryResponse
-from app.pipeline.factory import Pipeline
+from app.pipeline.protocol import Pipeline
 
 router = APIRouter()
 

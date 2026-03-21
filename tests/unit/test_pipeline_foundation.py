@@ -9,7 +9,8 @@ from app.db.validator import SQLValidator, ValidationResult
 from app.llm.generator import SQLGenerator
 from app.pipeline.assembler import PromptAssembler
 from app.pipeline.baseline import BaselinePipeline
-from app.pipeline.factory import Pipeline, build_pipeline
+from app.pipeline.factory import build_pipeline
+from app.pipeline.protocol import Pipeline
 from app.pipeline.state import PipelineState
 from app.retrieval.example_doc import ExampleDocument
 from app.retrieval.example_retriever import ExampleRetriever
