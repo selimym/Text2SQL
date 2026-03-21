@@ -5,7 +5,7 @@ import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.eval.runner import EvalReport, run_evaluation
 from app.pipeline.protocol import Pipeline
@@ -17,7 +17,7 @@ class VariantReport:
     report: EvalReport
     wall_clock_seconds: float
 
-    def to_dict(self) -> dict:  # type: ignore[type-arg]
+    def to_dict(self) -> dict[str, object]:
         return dataclasses.asdict(self)
 
 
@@ -30,7 +30,7 @@ class ComparisonReport:
     winner: str
     delta: dict[str, float]
 
-    def to_dict(self) -> dict:  # type: ignore[type-arg]
+    def to_dict(self) -> dict[str, object]:
         return dataclasses.asdict(self)
 
     def to_json(self) -> str:
@@ -44,6 +44,9 @@ def compare_variants(
     limit: int | None = None,
 ) -> ComparisonReport:
     """Evaluate each pipeline variant and produce a comparison report."""
+    if not pipelines:
+        raise ValueError("compare_variants() requires at least one pipeline variant.")
+
     variant_reports: list[VariantReport] = []
 
     for variant_name, pipeline in pipelines.items():
@@ -67,7 +70,7 @@ def compare_variants(
         delta[metric] = max(values) - min(values)
 
     return ComparisonReport(
-        run_date=datetime.utcnow().isoformat(),
+        run_date=datetime.now(UTC).isoformat(),
         limit=limit,
         db_filter=db_filter,
         variants=variant_reports,

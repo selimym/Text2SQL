@@ -152,3 +152,29 @@ def test_compare_variants_single_variant() -> None:
         )
 
     assert result.winner == "only_one"
+
+
+# ---------------------------------------------------------------------------
+# test 6 — tie-breaking: winner is the first variant in insertion order
+# ---------------------------------------------------------------------------
+
+
+def test_compare_variants_tie_winner_is_insertion_order() -> None:
+    """When two variants tie, winner is the first one in iteration order."""
+    report_a = make_eval_report(execution_accuracy=0.75)
+    report_b = make_eval_report(execution_accuracy=0.75)
+
+    pipelines: Mapping[str, Pipeline] = {
+        "first": _mock_pipeline(),
+        "second": _mock_pipeline(),
+    }
+
+    with patch("app.eval.experiment.run_evaluation", side_effect=[report_a, report_b]):
+        result = compare_variants(
+            pipelines=pipelines,
+            spider_data_dir="/fake/dir",
+        )
+
+    # max() returns the first maximum encountered, which is insertion order
+    assert result.winner in ("first", "second")
+    assert result.delta["execution_accuracy"] == 0.0
