@@ -72,7 +72,9 @@ def schema_precision(gold_sql: str, retrieved_tables: list[str]) -> float:
 
 
 def schema_noise_ratio(gold_sql: str, retrieved_tables: list[str]) -> float:
-    """1 - schema_precision. 0.0 if retrieved_tables is empty."""
+    """1 - schema_precision. Returns 0.0 if retrieved_tables is empty."""
+    if not retrieved_tables:
+        return 0.0
     return 1.0 - schema_precision(gold_sql, retrieved_tables)
 
 

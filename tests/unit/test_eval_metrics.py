@@ -144,14 +144,13 @@ def test_schema_noise_ratio_is_complement() -> None:
 
 
 def test_schema_noise_ratio_empty_retrieved() -> None:
-    # When retrieved_tables is empty, schema_precision returns 0.0,
-    # so noise = 1.0 - 0.0 = 1.0 (maximum noise, no precision)
+    # When retrieved_tables is empty, schema_noise_ratio returns 0.0 per spec
     assert (
         schema_noise_ratio(
             gold_sql="SELECT * FROM table_a",
             retrieved_tables=[],
         )
-        == 1.0
+        == 0.0
     )
 
 
