@@ -291,7 +291,6 @@ def bind_nodes(services: NodeServices) -> dict[str, Callable[[PipelineState], Pi
         ("generate_draft_sql", generate_draft_sql_node),
         ("refine_schema_context", refine_schema_context_node),
         ("generate_final_sql", generate_final_sql_node),
-        ("generate_sql", generate_sql_node),
         ("validate_sql", validate_sql_node),
         ("execute_sql", execute_sql_node),
         ("critique_failure", critique_failure_node),

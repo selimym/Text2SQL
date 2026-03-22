@@ -467,7 +467,6 @@ def test_bind_nodes_returns_all_nodes() -> None:
         "generate_draft_sql",
         "refine_schema_context",
         "generate_final_sql",
-        "generate_sql",
         "validate_sql",
         "execute_sql",
         "critique_failure",
