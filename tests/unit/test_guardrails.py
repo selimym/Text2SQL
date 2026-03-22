@@ -1,3 +1,8 @@
+from unittest.mock import MagicMock
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from app.api.models import ExecutionMetadata, QueryResponse
 from app.pipeline.guardrails import (
     check_input_guardrail,
@@ -155,3 +160,51 @@ def test_output_execution_failed_fails() -> None:
     response = _make_response(False)
     result = check_output_guardrail(response)
     assert result.passed is False
+
+
+# --- Integration: route guardrail wiring ---
+
+
+def _make_test_client() -> TestClient:
+    from app.api.routes import router
+
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app)
+
+
+def test_route_returns_422_on_input_guardrail_violation() -> None:
+    client = _make_test_client()
+    resp = client.post("/query", json={"question": "", "db_id": "test"})
+    assert resp.status_code == 422
+
+
+# --- Integration: retrieval guardrail flag ---
+
+
+def test_retrieval_guardrail_failed_flag_on_no_schema() -> None:
+    from app.pipeline.nodes import NodeServices, retrieve_examples_node
+    from app.pipeline.state import PipelineState
+    from app.retrieval.example_retriever import ExampleRetriever
+    from app.retrieval.schema_retriever import SchemaRetriever
+
+    schema_retriever = MagicMock(spec=SchemaRetriever)
+    schema_retriever.retrieve.return_value = []
+
+    example_retriever = MagicMock(spec=ExampleRetriever)
+    example_retriever.retrieve.return_value = []
+
+    from app.api.models import QueryRequest
+
+    request = QueryRequest(question="How many singers?", db_id="concert_singer")
+    state: PipelineState = {
+        "request": request,
+        "schema_docs": [],
+    }
+
+    svc = MagicMock(spec=NodeServices)
+    svc.example_retriever = example_retriever
+    svc.schema_retriever = schema_retriever
+
+    result = retrieve_examples_node(state, svc)
+    assert "retrieval_guardrail_failed" in (result.get("flags") or [])

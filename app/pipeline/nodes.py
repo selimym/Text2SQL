@@ -17,11 +17,17 @@ import sqlglot
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
+from app.api.models import ExecutionMetadata, QueryResponse
 from app.db.executor import SQLExecutor
 from app.db.validator import SQLValidator
 from app.llm.generator import SQLGenerator
 from app.llm.prompts import build_repair_prompt
 from app.pipeline.assembler import PromptAssembler
+from app.pipeline.guardrails import (
+    check_output_guardrail,
+    check_retrieval_guardrail,
+    check_sql_guardrail,
+)
 from app.pipeline.state import PipelineState
 from app.retrieval.example_retriever import ExampleRetriever
 from app.retrieval.schema_retriever import SchemaRetriever
@@ -66,11 +72,39 @@ def retrieve_schema_node(state: PipelineState, services: NodeServices) -> Pipeli
 def retrieve_examples_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     req = state["request"]
+    schema_docs = list(state.get("schema_docs") or [])
     example_docs = services.example_retriever.retrieve(req.question, req.db_id, req.top_k_examples)
     elapsed_ms = (time.monotonic() - start) * 1000
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    guardrail = check_retrieval_guardrail(
+        schema_docs,
+        example_docs,
+        max_schema_docs=settings.max_schema_docs,
+        max_example_docs=settings.max_example_docs,
+    )
+
+    flags = list(state.get("flags", []) or [])
+
+    if not guardrail.passed:
+        flags.append("retrieval_guardrail_failed")
+        return _new_state(
+            state,
+            example_docs=example_docs,
+            flags=flags,
+            step_timings=_merge_timings(state, "retrieve_examples", elapsed_ms),
+        )
+
+    if guardrail.reason:
+        example_docs = example_docs[: settings.max_example_docs]
+        flags.append("example_docs_truncated")
+
     return _new_state(
         state,
         example_docs=example_docs,
+        flags=flags,
         step_timings=_merge_timings(state, "retrieve_examples", elapsed_ms),
     )
 
@@ -191,10 +225,21 @@ def validate_sql_node(state: PipelineState, services: NodeServices) -> PipelineS
     start = time.monotonic()
     generated_sql = state.get("generated_sql") or ""
     validation_result = services.validator.validate(generated_sql)
+
+    sql_guard = check_sql_guardrail(generated_sql)
+    flags = list(state.get("flags", []) or [])
+    if not sql_guard.passed:
+        from app.db.validator import ValidationResult
+
+        validation_result = ValidationResult(valid=False, error=sql_guard.reason)
+    elif sql_guard.reason:
+        flags.append("sql_guardrail_warning")
+
     elapsed_ms = (time.monotonic() - start) * 1000
     return _new_state(
         state,
         validation_result=validation_result,
+        flags=flags,
         step_timings=_merge_timings(state, "validate_sql", elapsed_ms),
     )
 
@@ -271,8 +316,25 @@ def broaden_schema_node(state: PipelineState, services: NodeServices) -> Pipelin
 
 
 def build_response_node(state: PipelineState, services: NodeServices) -> PipelineState:
-    # Terminal node: pipeline extracts QueryResponse from state after graph completes.
-    return state
+    exec_result = state.get("execution_result")
+    flags = list(state.get("flags", []) or [])
+
+    partial_response = QueryResponse(
+        question=state["request"].question,
+        generated_sql=state.get("generated_sql") or "",
+        answer="",
+        execution_metadata=ExecutionMetadata(
+            success=exec_result.success if exec_result else False,
+            error=exec_result.error if exec_result else None,
+        )
+        if exec_result
+        else None,
+    )
+    out_guard = check_output_guardrail(partial_response)
+    if not out_guard.passed:
+        flags.append("uncertainty_disclosure")
+
+    return _new_state(state, flags=flags)
 
 
 def bind_nodes(services: NodeServices) -> dict[str, Callable[[PipelineState], PipelineState]]:

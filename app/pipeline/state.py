@@ -24,3 +24,4 @@ class PipelineState(_PipelineStateRequired, total=False):
     fault_category: str | None
     critique_text: str | None
     step_timings: dict[str, float]
+    flags: list[str]
