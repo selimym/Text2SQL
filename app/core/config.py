@@ -1,3 +1,4 @@
+import functools
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -26,5 +27,6 @@ class AppSettings(BaseSettings):
     max_example_docs: int = 5
 
 
+@functools.lru_cache
 def get_settings() -> AppSettings:
     return AppSettings()

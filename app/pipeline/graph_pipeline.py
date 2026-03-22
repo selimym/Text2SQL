@@ -14,7 +14,10 @@ class DeterministicGraphPipeline:
 
     Topology::
 
-        START → retrieve_schema → retrieve_examples → assemble_draft_prompt → generate_draft_sql
+        START → retrieve_schema → retrieve_examples
+          retrieve_examples:
+            - retrieval_guardrail_failed → build_response
+            - else → assemble_draft_prompt → generate_draft_sql
           generate_draft_sql → refine_schema_context → assemble_prompt → generate_final_sql → validate_sql
           validate_sql:
             - valid       → execute_sql

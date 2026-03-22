@@ -18,8 +18,9 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from app.api.models import ExecutionMetadata, QueryResponse
+from app.core.config import get_settings
 from app.db.executor import SQLExecutor
-from app.db.validator import SQLValidator
+from app.db.validator import SQLValidator, ValidationResult
 from app.llm.generator import SQLGenerator
 from app.llm.prompts import build_repair_prompt
 from app.pipeline.assembler import PromptAssembler
@@ -76,8 +77,6 @@ def retrieve_examples_node(state: PipelineState, services: NodeServices) -> Pipe
     example_docs = services.example_retriever.retrieve(req.question, req.db_id, req.top_k_examples)
     elapsed_ms = (time.monotonic() - start) * 1000
 
-    from app.core.config import get_settings
-
     settings = get_settings()
     guardrail = check_retrieval_guardrail(
         schema_docs,
@@ -98,11 +97,16 @@ def retrieve_examples_node(state: PipelineState, services: NodeServices) -> Pipe
         )
 
     if guardrail.reason:
-        example_docs = example_docs[: settings.max_example_docs]
-        flags.append("example_docs_truncated")
+        if "schema_docs exceeds" in (guardrail.reason or ""):
+            schema_docs = schema_docs[: settings.max_schema_docs]
+            flags.append("schema_docs_truncated")
+        else:
+            example_docs = example_docs[: settings.max_example_docs]
+            flags.append("example_docs_truncated")
 
     return _new_state(
         state,
+        schema_docs=schema_docs,
         example_docs=example_docs,
         flags=flags,
         step_timings=_merge_timings(state, "retrieve_examples", elapsed_ms),
@@ -229,9 +233,8 @@ def validate_sql_node(state: PipelineState, services: NodeServices) -> PipelineS
     sql_guard = check_sql_guardrail(generated_sql)
     flags = list(state.get("flags", []) or [])
     if not sql_guard.passed:
-        from app.db.validator import ValidationResult
-
         validation_result = ValidationResult(valid=False, error=sql_guard.reason)
+        flags.append("sql_guardrail_blocked")
     elif sql_guard.reason:
         flags.append("sql_guardrail_warning")
 
