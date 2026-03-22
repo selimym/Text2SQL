@@ -88,7 +88,7 @@ def run_evaluation(
         noise = schema_noise_ratio(ex.gold_sql, resp.retrieved_schema_summary or [])
         fewshot = (
             fewshot_table_overlap(ex.gold_sql, resp.retrieved_example_sqls)
-            if resp.retrieved_example_sqls is not None
+            if resp.retrieved_example_sqls
             else 0.0
         )
 
@@ -149,5 +149,6 @@ if __name__ == "__main__":
     # To run: build the pipeline in main.py and call run_evaluation() directly.
     print(f"Evaluation complete. Report saved to {args.output}")
     print(
-        "Metrics reported: execution_success, execution_accuracy, exact_match_rate, avg_schema_recall"
+        "Metrics reported: execution_success, execution_accuracy, exact_match_rate, "
+        "avg_schema_recall, avg_schema_precision, avg_schema_noise_ratio, avg_fewshot_table_overlap"
     )

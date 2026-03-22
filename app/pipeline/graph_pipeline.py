@@ -132,7 +132,7 @@ class DeterministicGraphPipeline:
 
         schema_docs = final_state.get("schema_docs", [])
         example_docs = final_state.get("example_docs", [])
-        retrieved_example_sqls = [e.sql for e in example_docs] if example_docs else None
+        retrieved_example_sqls = [e.sql for e in example_docs]
 
         execution_metadata = None
         if exec_result:
