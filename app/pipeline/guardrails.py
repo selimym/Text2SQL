@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from app.api.models import QueryResponse
+from app.api.models import QueryResponse
 
 
 @dataclass
@@ -37,10 +36,15 @@ def check_retrieval_guardrail(
 ) -> GuardrailResult:
     if len(schema_docs) == 0:
         return GuardrailResult(passed=False, reason="No schema documents retrieved")
+    if len(schema_docs) > max_schema_docs:
+        return GuardrailResult(
+            passed=True,
+            reason=f"schema_docs exceeds limit ({len(schema_docs)} > {max_schema_docs}); caller must truncate",
+        )
     if len(example_docs) > max_example_docs:
         return GuardrailResult(
             passed=True,
-            reason=f"example_docs truncated from {len(example_docs)} to {max_example_docs}",
+            reason=f"example_docs exceeds limit ({len(example_docs)} > {max_example_docs}); caller must truncate",
         )
     return GuardrailResult(passed=True)
 

@@ -63,6 +63,31 @@ def test_retrieval_truncation_warning() -> None:
     result = check_retrieval_guardrail(["schema_doc"], example_docs, max_example_docs=5)
     assert result.passed is True
     assert result.reason is not None
+    assert "exceeds limit" in result.reason
+
+
+def test_retrieval_schema_truncation_warning() -> None:
+    schema_docs = [
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "s5",
+        "s6",
+        "s7",
+        "s8",
+        "s9",
+        "s10",
+        "s11",
+        "s12",
+        "s13",
+        "s14",
+        "s15",
+    ]
+    result = check_retrieval_guardrail(schema_docs, [], max_schema_docs=10)
+    assert result.passed is True
+    assert result.reason is not None
+    assert "exceeds limit" in result.reason
 
 
 # --- check_sql_guardrail ---
