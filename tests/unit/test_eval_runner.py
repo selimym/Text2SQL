@@ -138,3 +138,73 @@ def test_results_contain_per_example_metrics(
     assert "execution_accuracy" in row
     assert "exact_match" in row
     assert "schema_recall" in row
+
+
+def test_evalreport_has_new_precision_noise_fewshot_fields(
+    perfect_pipeline: MagicMock, spider_dir_with_db: str
+) -> None:
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
+    assert hasattr(report, "avg_schema_precision")
+    assert hasattr(report, "avg_schema_noise_ratio")
+    assert hasattr(report, "avg_fewshot_table_overlap")
+
+
+def test_avg_schema_precision_computed_from_retrieved_schema(spider_dir_with_db: str) -> None:
+    pipeline = MagicMock()
+    # retrieved_schema_summary contains 'singer', which is in gold_sql
+    pipeline.run.return_value = QueryResponse(
+        question="How many singers?",
+        generated_sql="SELECT COUNT(*) FROM singer",
+        answer="[[1]]",
+        retrieved_schema_summary=["singer"],
+        execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
+    )
+    report = run_evaluation(pipeline, spider_dir_with_db)
+    # precision = |{singer} & {singer}| / len([singer]) = 1/1 = 1.0
+    assert report.avg_schema_precision == 1.0
+
+
+def test_avg_fewshot_table_overlap_with_sqls(spider_dir_with_db: str) -> None:
+    pipeline = MagicMock()
+    pipeline.run.return_value = QueryResponse(
+        question="How many singers?",
+        generated_sql="SELECT COUNT(*) FROM singer",
+        answer="[[1]]",
+        retrieved_schema_summary=["singer"],
+        retrieved_example_sqls=["SELECT * FROM singer WHERE id = 1"],
+        execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
+    )
+    report = run_evaluation(pipeline, spider_dir_with_db)
+    # fewshot overlap: gold tables={singer}, retrieved sql tables={singer} => 1.0
+    assert report.avg_fewshot_table_overlap == 1.0
+
+
+def test_avg_fewshot_table_overlap_none_when_no_sqls(spider_dir_with_db: str) -> None:
+    pipeline = MagicMock()
+    # retrieved_example_sqls is None (default)
+    pipeline.run.return_value = QueryResponse(
+        question="How many singers?",
+        generated_sql="SELECT COUNT(*) FROM singer",
+        answer="[[1]]",
+        retrieved_schema_summary=["singer"],
+        execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
+    )
+    report = run_evaluation(pipeline, spider_dir_with_db)
+    assert report.avg_fewshot_table_overlap == 0.0
+
+
+def test_results_contain_new_per_example_metrics(spider_dir_with_db: str) -> None:
+    pipeline = MagicMock()
+    pipeline.run.return_value = QueryResponse(
+        question="How many singers?",
+        generated_sql="SELECT COUNT(*) FROM singer",
+        answer="[[1]]",
+        retrieved_schema_summary=["singer"],
+        retrieved_example_sqls=["SELECT name FROM singer"],
+        execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
+    )
+    report = run_evaluation(pipeline, spider_dir_with_db)
+    row = report.results[0]
+    assert "schema_precision" in row
+    assert "schema_noise_ratio" in row
+    assert "fewshot_table_overlap" in row
