@@ -22,6 +22,8 @@ class AppSettings(BaseSettings):
     max_retries: int = 2
     agent_max_iterations: int = 10
     langsmith_project: str = "text2sql"
+    max_schema_docs: int = 10
+    max_example_docs: int = 5
 
 
 def get_settings() -> AppSettings:
