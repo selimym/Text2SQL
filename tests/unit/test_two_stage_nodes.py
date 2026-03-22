@@ -205,6 +205,31 @@ def test_refine_schema_context_node_all_mentioned_tables_have_docs() -> None:
     assert result["schema_docs"][0].table_name == "singer"
 
 
+def test_refine_schema_context_node_soft_fetch_missing_table() -> None:
+    """A mentioned table not in schema_docs triggers a retriever call and appends whatever is returned."""
+    from app.pipeline.nodes import refine_schema_context_node
+
+    # draft SQL mentions 'concert', but only 'singer' doc exists in state
+    singer_doc = make_schema_doc("singer")
+    fetched_doc = make_schema_doc("venue")  # retriever returns a different table — still accepted
+
+    state = make_base_state(
+        schema_docs=[singer_doc],
+        draft_sql="SELECT COUNT(*) FROM concert",
+    )
+    schema_retriever = MagicMock()
+    schema_retriever.retrieve.return_value = [fetched_doc]
+    svc = make_services()
+    svc.schema_retriever = schema_retriever
+
+    result = refine_schema_context_node(state, svc)
+
+    schema_retriever.retrieve.assert_called_once()
+    # singer_doc is filtered out (not mentioned); fetched_doc is appended
+    assert len(result["schema_docs"]) == 1
+    assert result["schema_docs"][0].table_name == "venue"
+
+
 def test_refine_schema_context_node_updates_step_timings() -> None:
     from app.pipeline.nodes import refine_schema_context_node
 

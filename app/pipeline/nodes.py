@@ -155,7 +155,7 @@ def refine_schema_context_node(state: PipelineState, services: NodeServices) -> 
             for table_name in mentioned_tables:
                 if table_name not in covered:
                     fetched = services.schema_retriever.retrieve(req.question, req.db_id, top_k=1)
-                    if fetched and fetched[0].table_name.lower() == table_name:
+                    if fetched:
                         filtered_docs.append(fetched[0])
                         covered.add(table_name)
 
