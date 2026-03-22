@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import sqlglot
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
@@ -99,7 +100,78 @@ def assemble_prompt_node(state: PipelineState, services: NodeServices) -> Pipeli
     )
 
 
-def generate_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
+def assemble_draft_prompt_node(state: PipelineState, services: NodeServices) -> PipelineState:
+    start = time.monotonic()
+    req = state["request"]
+    schema_docs = state.get("schema_docs") or []
+    example_docs = state.get("example_docs") or []
+    prompt = services.assembler.assemble(req.question, schema_docs, example_docs)
+    elapsed_ms = (time.monotonic() - start) * 1000
+    return _new_state(
+        state,
+        assembled_prompt=prompt,
+        step_timings=_merge_timings(state, "assemble_draft_prompt_ms", elapsed_ms),
+    )
+
+
+def generate_draft_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
+    start = time.monotonic()
+    assembled_prompt = state.get("assembled_prompt") or ""
+    draft_sql = services.generator.generate(assembled_prompt)
+    elapsed_ms = (time.monotonic() - start) * 1000
+    return _new_state(
+        state,
+        draft_sql=draft_sql,
+        step_timings=_merge_timings(state, "generate_draft_sql_ms", elapsed_ms),
+    )
+
+
+def refine_schema_context_node(state: PipelineState, services: NodeServices) -> PipelineState:
+    start = time.monotonic()
+    draft_sql = state.get("draft_sql") or ""
+    schema_docs = list(state.get("schema_docs") or [])
+    req = state["request"]
+
+    try:
+        mentioned_tables: set[str] = set()
+        for stmt in sqlglot.parse(draft_sql):
+            if stmt is not None:
+                cte_aliases: set[str] = set()
+                for cte in stmt.find_all(sqlglot.exp.CTE):
+                    if cte.alias:
+                        cte_aliases.add(cte.alias.lower())
+                for tbl in stmt.find_all(sqlglot.exp.Table):
+                    if tbl.name and tbl.name.lower() not in cte_aliases:
+                        mentioned_tables.add(tbl.name.lower())
+
+        if mentioned_tables:
+            # Filter existing docs to only those whose table_name is mentioned
+            filtered_docs = [
+                doc for doc in schema_docs if doc.table_name.lower() in mentioned_tables
+            ]
+
+            # For any mentioned table not already in filtered_docs, try to fetch it
+            covered = {doc.table_name.lower() for doc in filtered_docs}
+            for table_name in mentioned_tables:
+                if table_name not in covered:
+                    fetched = services.schema_retriever.retrieve(req.question, req.db_id, top_k=1)
+                    if fetched and fetched[0].table_name.lower() == table_name:
+                        filtered_docs.append(fetched[0])
+                        covered.add(table_name)
+
+            schema_docs = filtered_docs
+    except Exception:
+        pass  # safe fallback: keep existing schema_docs unchanged
+
+    elapsed_ms = (time.monotonic() - start) * 1000
+    return _new_state(
+        state,
+        schema_docs=schema_docs,
+        step_timings=_merge_timings(state, "refine_schema_ms", elapsed_ms),
+    )
+
+
+def generate_final_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     assembled_prompt = state.get("assembled_prompt") or ""
     generated_sql = services.generator.generate(assembled_prompt)
@@ -107,8 +179,12 @@ def generate_sql_node(state: PipelineState, services: NodeServices) -> PipelineS
     return _new_state(
         state,
         generated_sql=generated_sql,
-        step_timings=_merge_timings(state, "generate_sql", elapsed_ms),
+        step_timings=_merge_timings(state, "generate_final_sql_ms", elapsed_ms),
     )
+
+
+# Backward-compatibility alias
+generate_sql_node = generate_final_sql_node
 
 
 def validate_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
@@ -211,6 +287,10 @@ def bind_nodes(services: NodeServices) -> dict[str, Callable[[PipelineState], Pi
         ("retrieve_schema", retrieve_schema_node),
         ("retrieve_examples", retrieve_examples_node),
         ("assemble_prompt", assemble_prompt_node),
+        ("assemble_draft_prompt", assemble_draft_prompt_node),
+        ("generate_draft_sql", generate_draft_sql_node),
+        ("refine_schema_context", refine_schema_context_node),
+        ("generate_final_sql", generate_final_sql_node),
         ("generate_sql", generate_sql_node),
         ("validate_sql", validate_sql_node),
         ("execute_sql", execute_sql_node),

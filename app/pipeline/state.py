@@ -16,6 +16,7 @@ class PipelineState(_PipelineStateRequired, total=False):
     schema_docs: list[SchemaDocument]
     example_docs: list[ExampleDocument]
     assembled_prompt: str
+    draft_sql: str | None
     generated_sql: str
     validation_result: ValidationResult
     execution_result: ExecutionResult

@@ -207,26 +207,26 @@ def test_assemble_prompt_node_updates_step_timings() -> None:
 
 
 # ---------------------------------------------------------------------------
-# generate_sql_node
+# generate_final_sql_node
 # ---------------------------------------------------------------------------
 
 
-def test_generate_sql_node_updates_generated_sql() -> None:
-    from app.pipeline.nodes import generate_sql_node
+def test_generate_final_sql_node_updates_generated_sql() -> None:
+    from app.pipeline.nodes import generate_final_sql_node
 
     state = make_base_state(assembled_prompt="some prompt")
     svc = make_services()
-    result = generate_sql_node(state, svc)
+    result = generate_final_sql_node(state, svc)
     assert result["generated_sql"] == "SELECT COUNT(*) FROM singer"
 
 
-def test_generate_sql_node_updates_step_timings() -> None:
-    from app.pipeline.nodes import generate_sql_node
+def test_generate_final_sql_node_updates_step_timings() -> None:
+    from app.pipeline.nodes import generate_final_sql_node
 
     state = make_base_state(assembled_prompt="some prompt")
     svc = make_services()
-    result = generate_sql_node(state, svc)
-    assert "generate_sql" in result["step_timings"]
+    result = generate_final_sql_node(state, svc)
+    assert "generate_final_sql_ms" in result["step_timings"]
 
 
 # ---------------------------------------------------------------------------
@@ -454,7 +454,7 @@ def test_build_response_node_returns_state_unchanged() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_bind_nodes_returns_all_nine_nodes() -> None:
+def test_bind_nodes_returns_all_nodes() -> None:
     from app.pipeline.nodes import bind_nodes
 
     svc = make_services()
@@ -463,6 +463,10 @@ def test_bind_nodes_returns_all_nine_nodes() -> None:
         "retrieve_schema",
         "retrieve_examples",
         "assemble_prompt",
+        "assemble_draft_prompt",
+        "generate_draft_sql",
+        "refine_schema_context",
+        "generate_final_sql",
         "generate_sql",
         "validate_sql",
         "execute_sql",
@@ -484,6 +488,6 @@ def test_bind_nodes_callables_accept_only_state() -> None:
         sig = inspect.signature(fn)
         # After partial binding, only `state` should remain as a required parameter
         free_params = [p for p in sig.parameters.values() if p.default is inspect.Parameter.empty]
-        assert len(free_params) == 1, (
-            f"Node '{name}' has {len(free_params)} free parameters after binding; expected 1"
-        )
+        assert (
+            len(free_params) == 1
+        ), f"Node '{name}' has {len(free_params)} free parameters after binding; expected 1"

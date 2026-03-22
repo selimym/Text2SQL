@@ -68,3 +68,10 @@ addopts = "--cov=app --cov-report=term-missing"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.15.7",
+]

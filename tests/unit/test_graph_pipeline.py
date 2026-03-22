@@ -334,7 +334,7 @@ def test_step_timings_populated() -> None:
         "retrieve_schema",
         "retrieve_examples",
         "assemble_prompt",
-        "generate_sql",
+        "generate_final_sql_ms",
         "validate_sql",
         "execute_sql",
     }
