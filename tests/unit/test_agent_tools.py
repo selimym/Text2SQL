@@ -1,5 +1,5 @@
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from app.db.executor import ExecutionResult, SQLExecutor
 from app.db.schema_doc import ColumnInfo, SchemaDocument
@@ -12,9 +12,12 @@ from app.retrieval.schema_retriever import SchemaRetriever
 
 def make_context() -> ToolContext:
     schema_retriever = MagicMock(spec=SchemaRetriever)
+    schema_retriever.retrieve = AsyncMock(return_value=[])
     example_retriever = MagicMock(spec=ExampleRetriever)
+    example_retriever.retrieve = AsyncMock(return_value=[])
     validator = MagicMock(spec=SQLValidator)
     executor = MagicMock(spec=SQLExecutor)
+    executor.execute = AsyncMock(return_value=ExecutionResult(success=True, rows=[], row_count=0))
     return ToolContext(
         schema_retriever=schema_retriever,
         example_retriever=example_retriever,
@@ -24,7 +27,7 @@ def make_context() -> ToolContext:
     )
 
 
-def test_get_schema_tool_returns_formatted_text() -> None:
+async def test_get_schema_tool_returns_formatted_text() -> None:
     ctx = make_context()
     docs = [
         SchemaDocument(
@@ -40,49 +43,53 @@ def test_get_schema_tool_returns_formatted_text() -> None:
             foreign_keys=[],
         ),
     ]
-    ctx.schema_retriever.retrieve.return_value = docs  # type: ignore[attr-defined]
+    ctx.schema_retriever.retrieve = AsyncMock(return_value=docs)  # type: ignore[method-assign]
 
     tools = make_tools(ctx)
     get_schema = next(t for t in tools if t.name == "get_schema")
-    result = get_schema.invoke({"question": "Show users", "db_id": "mydb", "top_k": 5})
+    result = await get_schema.ainvoke({"question": "Show users", "db_id": "mydb", "top_k": 5})
 
     assert "users" in result
     assert "orders" in result
 
 
-def test_get_schema_tool_no_results() -> None:
+async def test_get_schema_tool_no_results() -> None:
     ctx = make_context()
-    ctx.schema_retriever.retrieve.return_value = []  # type: ignore[attr-defined]
+    ctx.schema_retriever.retrieve = AsyncMock(return_value=[])  # type: ignore[method-assign]
 
     tools = make_tools(ctx)
     get_schema = next(t for t in tools if t.name == "get_schema")
-    result = get_schema.invoke({"question": "Show users", "db_id": "mydb", "top_k": 5})
+    result = await get_schema.ainvoke({"question": "Show users", "db_id": "mydb", "top_k": 5})
 
     assert result == "No schema found."
 
 
-def test_get_examples_tool_returns_formatted_text() -> None:
+async def test_get_examples_tool_returns_formatted_text() -> None:
     ctx = make_context()
     docs = [
         ExampleDocument(db_id="mydb", question="How many users?", sql="SELECT COUNT(*) FROM users"),
     ]
-    ctx.example_retriever.retrieve.return_value = docs  # type: ignore[attr-defined]
+    ctx.example_retriever.retrieve = AsyncMock(return_value=docs)  # type: ignore[method-assign]
 
     tools = make_tools(ctx)
     get_examples = next(t for t in tools if t.name == "get_examples")
-    result = get_examples.invoke({"question": "How many users?", "db_id": "mydb", "top_k": 3})
+    result = await get_examples.ainvoke(
+        {"question": "How many users?", "db_id": "mydb", "top_k": 3}
+    )
 
     assert "Q:" in result
     assert "SQL:" in result
 
 
-def test_get_examples_tool_no_results() -> None:
+async def test_get_examples_tool_no_results() -> None:
     ctx = make_context()
-    ctx.example_retriever.retrieve.return_value = []  # type: ignore[attr-defined]
+    ctx.example_retriever.retrieve = AsyncMock(return_value=[])  # type: ignore[method-assign]
 
     tools = make_tools(ctx)
     get_examples = next(t for t in tools if t.name == "get_examples")
-    result = get_examples.invoke({"question": "How many users?", "db_id": "mydb", "top_k": 3})
+    result = await get_examples.ainvoke(
+        {"question": "How many users?", "db_id": "mydb", "top_k": 3}
+    )
 
     assert result == "No examples found."
 
@@ -111,20 +118,22 @@ def test_validate_sql_tool_invalid() -> None:
     assert result.startswith("invalid:")
 
 
-def test_execute_sql_tool_success() -> None:
+async def test_execute_sql_tool_success() -> None:
     ctx = make_context()
-    ctx.executor.execute.return_value = ExecutionResult(  # type: ignore[attr-defined]
-        success=True,
-        rows=[[1, "Alice"], [2, "Bob"]],
-        column_names=["id", "name"],
-        row_count=2,
+    ctx.executor.execute = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=True,
+            rows=[[1, "Alice"], [2, "Bob"]],
+            column_names=["id", "name"],
+            row_count=2,
+        )
     )
 
     tools = make_tools(ctx)
     execute_sql = next(t for t in tools if t.name == "execute_sql")
-    result = execute_sql.invoke({"sql": "SELECT * FROM users", "db_id": "mydb"})
+    result = await execute_sql.ainvoke({"sql": "SELECT * FROM users", "db_id": "mydb"})
 
-    ctx.executor.execute.assert_called_once_with(  # type: ignore[attr-defined]
+    ctx.executor.execute.assert_called_once_with(
         "SELECT * FROM users", "spider_data/database/mydb/mydb.sqlite"
     )
     parsed = json.loads(result)
@@ -135,19 +144,21 @@ def test_execute_sql_tool_success() -> None:
     assert parsed["error"] is None
 
 
-def test_execute_sql_tool_truncated() -> None:
+async def test_execute_sql_tool_truncated() -> None:
     ctx = make_context()
-    ctx.executor.execute.return_value = ExecutionResult(  # type: ignore[attr-defined]
-        success=True,
-        rows=[[1, "Alice"]],
-        column_names=["id", "name"],
-        row_count=1,
-        error="Result truncated",
+    ctx.executor.execute = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=True,
+            rows=[[1, "Alice"]],
+            column_names=["id", "name"],
+            row_count=1,
+            error="Result truncated",
+        )
     )
 
     tools = make_tools(ctx)
     execute_sql = next(t for t in tools if t.name == "execute_sql")
-    result = execute_sql.invoke({"sql": "SELECT * FROM users", "db_id": "mydb"})
+    result = await execute_sql.ainvoke({"sql": "SELECT * FROM users", "db_id": "mydb"})
 
     parsed = json.loads(result)
     assert parsed["success"] is True
@@ -155,17 +166,19 @@ def test_execute_sql_tool_truncated() -> None:
     assert parsed["error"] is None
 
 
-def test_execute_sql_tool_failure() -> None:
+async def test_execute_sql_tool_failure() -> None:
     ctx = make_context()
-    ctx.executor.execute.return_value = ExecutionResult(  # type: ignore[attr-defined]
-        success=False,
-        error="no such table: users",
-        error_category="execution_error",
+    ctx.executor.execute = AsyncMock(  # type: ignore[method-assign]
+        return_value=ExecutionResult(
+            success=False,
+            error="no such table: users",
+            error_category="execution_error",
+        )
     )
 
     tools = make_tools(ctx)
     execute_sql = next(t for t in tools if t.name == "execute_sql")
-    result = execute_sql.invoke({"sql": "SELECT * FROM users", "db_id": "mydb"})
+    result = await execute_sql.ainvoke({"sql": "SELECT * FROM users", "db_id": "mydb"})
 
     parsed = json.loads(result)
     assert parsed["success"] is False
