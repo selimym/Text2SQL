@@ -10,14 +10,23 @@ class SQLGenerator:
     def __init__(self, llm: BaseChatModel) -> None:
         self.llm = llm
 
+    def _strip_fences(self, sql: str) -> str:
+        sql = re.sub(r"^```(?:sql)?\s*", "", sql, flags=re.IGNORECASE)
+        sql = re.sub(r"\s*```$", "", sql)
+        return sql.strip()
+
     def generate(self, user_prompt: str) -> str:
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(content=user_prompt),
         ]
         response = self.llm.invoke(messages)
-        sql = str(response.content).strip()
-        # Strip markdown code fences if present
-        sql = re.sub(r"^```(?:sql)?\s*", "", sql, flags=re.IGNORECASE)
-        sql = re.sub(r"\s*```$", "", sql)
-        return sql.strip()
+        return self._strip_fences(str(response.content).strip())
+
+    async def agenerate(self, user_prompt: str) -> str:
+        messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt),
+        ]
+        response = await self.llm.ainvoke(messages)
+        return self._strip_fences(str(response.content).strip())
