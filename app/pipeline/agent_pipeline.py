@@ -33,13 +33,13 @@ class AgentPipeline:
         )
         return create_react_agent(self.llm, tools, state_modifier=system_prompt)
 
-    def run(self, request: QueryRequest) -> QueryResponse:
+    async def run(self, request: QueryRequest) -> QueryResponse:
         start_ms = time.monotonic() * 1000
 
         human_msg = f"Generate SQL for this question: {request.question}\nDatabase: {request.db_id}"
         config = {"recursion_limit": self.max_iterations * 3 + 5}
 
-        result = self._agent.invoke(
+        result = await self._agent.ainvoke(
             {"messages": [HumanMessage(content=human_msg)]},
             config=config,
         )
@@ -87,7 +87,7 @@ class AgentPipeline:
         db_path = (
             f"{self.tool_context.spider_data_dir}/database/{request.db_id}/{request.db_id}.sqlite"
         )
-        exec_result = self.tool_context.executor.execute(raw_sql, db_path)
+        exec_result = await self.tool_context.executor.execute(raw_sql, db_path)
 
         answer = (
             str(exec_result.rows)
