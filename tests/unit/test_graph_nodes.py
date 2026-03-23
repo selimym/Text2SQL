@@ -487,6 +487,5 @@ def test_bind_nodes_callables_accept_only_state() -> None:
         sig = inspect.signature(fn)
         # After partial binding, only `state` should remain as a required parameter
         free_params = [p for p in sig.parameters.values() if p.default is inspect.Parameter.empty]
-        assert (
-            len(free_params) == 1
-        ), f"Node '{name}' has {len(free_params)} free parameters after binding; expected 1"
+        msg = f"Node '{name}' has {len(free_params)} free parameters after binding; expected 1"
+        assert len(free_params) == 1, msg
