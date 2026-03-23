@@ -29,6 +29,8 @@ class QueryResponse(BaseModel):
     trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     step_timings: dict[str, float] | None = None
     retry_count: int | None = None
+    draft_sql: str | None = None
+    retrieved_example_sqls: list[str] | None = None
 
 
 class ErrorResponse(BaseModel):

@@ -333,13 +333,101 @@ def test_step_timings_populated() -> None:
     expected_keys = {
         "retrieve_schema",
         "retrieve_examples",
+        "assemble_draft_prompt_ms",
+        "generate_draft_sql_ms",
+        "refine_schema_ms",
         "assemble_prompt",
-        "generate_sql",
+        "generate_final_sql_ms",
         "validate_sql",
         "execute_sql",
     }
     for key in expected_keys:
         assert key in response.step_timings, f"Missing timing key: {key}"
+
+
+def test_two_stage_draft_sql_populated() -> None:
+    """Happy path: response.draft_sql is populated after 2-stage generation."""
+    services = make_services(generated_sql="SELECT COUNT(*) FROM singers")
+    pipeline = make_pipeline(services)
+    request = make_request()
+
+    response = pipeline.run(request)
+
+    assert response.draft_sql is not None
+
+
+def test_repair_loop_uses_assemble_prompt_not_draft() -> None:
+    """Repair loop goes through assemble_prompt, not assemble_draft_prompt.
+
+    assemble_draft_prompt_node calls assembler.assemble once (stage-1).
+    After a validation failure, the repair loop calls assemble_prompt_node which
+    also calls assembler.assemble once more — but never revisits assemble_draft_prompt.
+    So assembler.assemble.call_count should be exactly 2 total (1 draft + 1 repair).
+    """
+    from app.db.executor import SQLExecutor
+    from app.db.schema_doc import SchemaDocument
+    from app.db.validator import SQLValidator
+    from app.llm.generator import SQLGenerator
+    from app.pipeline.assembler import PromptAssembler
+    from app.retrieval.example_doc import ExampleDocument
+    from app.retrieval.example_retriever import ExampleRetriever
+    from app.retrieval.schema_retriever import SchemaRetriever
+
+    schema_doc = SchemaDocument(db_id="test_db", table_name="singers", columns=[], foreign_keys=[])
+    example_doc = ExampleDocument(
+        db_id="test_db", question="How many?", sql="SELECT COUNT(*) FROM t"
+    )
+
+    schema_retriever = MagicMock(spec=SchemaRetriever)
+    schema_retriever.retrieve.return_value = [schema_doc]
+
+    example_retriever = MagicMock(spec=ExampleRetriever)
+    example_retriever.retrieve.return_value = [example_doc]
+
+    assembler = MagicMock(spec=PromptAssembler)
+    assembler.assemble.return_value = "assembled prompt"
+
+    llm = MagicMock()
+    llm_response = MagicMock()
+    llm_response.content = "generation_fault"
+    llm.invoke.return_value = llm_response
+
+    generator = MagicMock(spec=SQLGenerator)
+    generator.generate.return_value = "SELECT 1"
+    generator.llm = llm
+
+    validator = MagicMock(spec=SQLValidator)
+    # First call invalid (triggers repair), second call valid
+    validator.validate.side_effect = [
+        ValidationResult(valid=False, error="syntax error"),
+        ValidationResult(valid=True),
+    ]
+
+    executor = MagicMock(spec=SQLExecutor)
+    executor.execute.return_value = ExecutionResult(success=True, rows=[["1"]], row_count=1)
+
+    services = NodeServices(
+        schema_retriever=schema_retriever,
+        example_retriever=example_retriever,
+        assembler=assembler,
+        generator=generator,
+        validator=validator,
+        executor=executor,
+        spider_data_dir="spider_data",
+        llm=llm,
+    )
+    pipeline = make_pipeline(services, max_retries=2)
+    request = make_request()
+
+    pipeline.run(request)
+
+    # assembler.assemble is called twice in the happy-path of stage-1:
+    #   1. assemble_draft_prompt_node (always calls assembler.assemble)
+    #   2. assemble_prompt_node on the initial pass (no critique_text yet → calls assembler.assemble)
+    # The repair loop re-enters assemble_prompt_node with critique_text set, which causes
+    # build_repair_prompt to be used instead — so assembler.assemble is NOT called again.
+    # Total: 2 calls to assembler.assemble (draft + initial final-prompt), not 3.
+    assert assembler.assemble.call_count == 2
 
 
 def test_max_retries_reached_execution() -> None:

@@ -10,11 +10,15 @@ from app.pipeline.state import PipelineState
 
 
 class DeterministicGraphPipeline:
-    """LangGraph pipeline with conditional retry/repair loop.
+    """LangGraph pipeline with 2-stage generation and conditional retry/repair loop.
 
     Topology::
 
-        START → retrieve_schema → retrieve_examples → assemble_prompt → generate_sql → validate_sql
+        START → retrieve_schema → retrieve_examples
+          retrieve_examples:
+            - retrieval_guardrail_failed → build_response
+            - else → assemble_draft_prompt → generate_draft_sql
+          generate_draft_sql → refine_schema_context → assemble_prompt → generate_final_sql → validate_sql
           validate_sql:
             - valid       → execute_sql
             - invalid, budget exhausted → build_response
@@ -26,15 +30,21 @@ class DeterministicGraphPipeline:
           critique_failure:
             - retrieval_fault → broaden_schema → assemble_prompt
             - else            → assemble_prompt
+          assemble_prompt → generate_final_sql  (repair loop)
           build_response → END
     """
 
     def __init__(self, services: NodeServices, max_retries: int = 2) -> None:
         self.max_retries = max_retries
-        self._recursion_limit = (9 + 3) * (max_retries + 1)
+        self._recursion_limit = (11 + 3) * (max_retries + 1)
         self._compiled: Any = self._build_graph(services, max_retries)
 
     def _build_graph(self, services: NodeServices, max_retries: int) -> Any:
+        def route_after_retrieve(state: PipelineState) -> str:
+            if "retrieval_guardrail_failed" in (state.get("flags") or []):
+                return "build_response"
+            return "assemble_draft_prompt"
+
         def route_after_validate(state: PipelineState) -> str:
             if state["validation_result"].valid:
                 return "execute_sql"
@@ -61,9 +71,19 @@ class DeterministicGraphPipeline:
 
         graph.add_edge(START, "retrieve_schema")
         graph.add_edge("retrieve_schema", "retrieve_examples")
-        graph.add_edge("retrieve_examples", "assemble_prompt")
-        graph.add_edge("assemble_prompt", "generate_sql")
-        graph.add_edge("generate_sql", "validate_sql")
+        graph.add_conditional_edges(
+            "retrieve_examples",
+            route_after_retrieve,
+            {
+                "build_response": "build_response",
+                "assemble_draft_prompt": "assemble_draft_prompt",
+            },
+        )
+        graph.add_edge("assemble_draft_prompt", "generate_draft_sql")
+        graph.add_edge("generate_draft_sql", "refine_schema_context")
+        graph.add_edge("refine_schema_context", "assemble_prompt")
+        graph.add_edge("assemble_prompt", "generate_final_sql")
+        graph.add_edge("generate_final_sql", "validate_sql")
 
         graph.add_conditional_edges(
             "validate_sql",
@@ -105,18 +125,21 @@ class DeterministicGraphPipeline:
 
         exec_result = final_state.get("execution_result")
         gen_sql = final_state.get("generated_sql", "")
+        draft_sql = final_state.get("draft_sql")
         retry_count = final_state.get("retry_count")
         step_timings = final_state.get("step_timings")
 
-        flags: list[str] = []
+        pipeline_flags = list(final_state.get("flags") or [])
+        retry_flags: list[str] = []
         if retry_count is not None and retry_count > 0:
-            flags.append(f"retried_{retry_count}_times")
+            retry_flags.append(f"retried_{retry_count}_times")
         # Add max_retries_reached flag if we hit the limit
         validation = final_state.get("validation_result")
         if (validation and not validation.valid and (retry_count or 0) >= self.max_retries) or (
             exec_result and not exec_result.success and (retry_count or 0) >= self.max_retries
         ):
-            flags.append("max_retries_reached")
+            retry_flags.append("max_retries_reached")
+        flags = pipeline_flags + retry_flags
 
         answer = ""
         if exec_result and exec_result.success:
@@ -126,6 +149,7 @@ class DeterministicGraphPipeline:
 
         schema_docs = final_state.get("schema_docs", [])
         example_docs = final_state.get("example_docs", [])
+        retrieved_example_sqls = [e.sql for e in example_docs]
 
         execution_metadata = None
         if exec_result:
@@ -141,9 +165,11 @@ class DeterministicGraphPipeline:
         return QueryResponse(
             question=request.question,
             generated_sql=gen_sql,
+            draft_sql=draft_sql,
             answer=answer,
             retrieved_schema_summary=[d.table_name for d in schema_docs],
             retrieved_examples_summary=[e.question for e in example_docs],
+            retrieved_example_sqls=retrieved_example_sqls,
             execution_metadata=execution_metadata,
             step_timings=step_timings,
             retry_count=retry_count,

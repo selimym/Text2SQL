@@ -13,14 +13,22 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import sqlglot
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
+from app.api.models import ExecutionMetadata, QueryResponse
+from app.core.config import get_settings
 from app.db.executor import SQLExecutor
-from app.db.validator import SQLValidator
+from app.db.validator import SQLValidator, ValidationResult
 from app.llm.generator import SQLGenerator
 from app.llm.prompts import build_repair_prompt
 from app.pipeline.assembler import PromptAssembler
+from app.pipeline.guardrails import (
+    check_output_guardrail,
+    check_retrieval_guardrail,
+    check_sql_guardrail,
+)
 from app.pipeline.state import PipelineState
 from app.retrieval.example_retriever import ExampleRetriever
 from app.retrieval.schema_retriever import SchemaRetriever
@@ -65,11 +73,42 @@ def retrieve_schema_node(state: PipelineState, services: NodeServices) -> Pipeli
 def retrieve_examples_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     req = state["request"]
+    schema_docs = list(state.get("schema_docs") or [])
     example_docs = services.example_retriever.retrieve(req.question, req.db_id, req.top_k_examples)
     elapsed_ms = (time.monotonic() - start) * 1000
+
+    settings = get_settings()
+    guardrail = check_retrieval_guardrail(
+        schema_docs,
+        example_docs,
+        max_schema_docs=settings.max_schema_docs,
+        max_example_docs=settings.max_example_docs,
+    )
+
+    flags = list(state.get("flags", []) or [])
+
+    if not guardrail.passed:
+        flags.append("retrieval_guardrail_failed")
+        return _new_state(
+            state,
+            example_docs=example_docs,
+            flags=flags,
+            step_timings=_merge_timings(state, "retrieve_examples", elapsed_ms),
+        )
+
+    if guardrail.reason:
+        if "schema_docs exceeds" in (guardrail.reason or ""):
+            schema_docs = schema_docs[: settings.max_schema_docs]
+            flags.append("schema_docs_truncated")
+        else:
+            example_docs = example_docs[: settings.max_example_docs]
+            flags.append("example_docs_truncated")
+
     return _new_state(
         state,
+        schema_docs=schema_docs,
         example_docs=example_docs,
+        flags=flags,
         step_timings=_merge_timings(state, "retrieve_examples", elapsed_ms),
     )
 
@@ -99,7 +138,78 @@ def assemble_prompt_node(state: PipelineState, services: NodeServices) -> Pipeli
     )
 
 
-def generate_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
+def assemble_draft_prompt_node(state: PipelineState, services: NodeServices) -> PipelineState:
+    start = time.monotonic()
+    req = state["request"]
+    schema_docs = state.get("schema_docs") or []
+    example_docs = state.get("example_docs") or []
+    prompt = services.assembler.assemble(req.question, schema_docs, example_docs)
+    elapsed_ms = (time.monotonic() - start) * 1000
+    return _new_state(
+        state,
+        assembled_prompt=prompt,
+        step_timings=_merge_timings(state, "assemble_draft_prompt_ms", elapsed_ms),
+    )
+
+
+def generate_draft_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
+    start = time.monotonic()
+    assembled_prompt = state.get("assembled_prompt") or ""
+    draft_sql = services.generator.generate(assembled_prompt)
+    elapsed_ms = (time.monotonic() - start) * 1000
+    return _new_state(
+        state,
+        draft_sql=draft_sql,
+        step_timings=_merge_timings(state, "generate_draft_sql_ms", elapsed_ms),
+    )
+
+
+def refine_schema_context_node(state: PipelineState, services: NodeServices) -> PipelineState:
+    start = time.monotonic()
+    draft_sql = state.get("draft_sql") or ""
+    schema_docs = list(state.get("schema_docs") or [])
+    req = state["request"]
+
+    try:
+        mentioned_tables: set[str] = set()
+        for stmt in sqlglot.parse(draft_sql):
+            if stmt is not None:
+                cte_aliases: set[str] = set()
+                for cte in stmt.find_all(sqlglot.exp.CTE):
+                    if cte.alias:
+                        cte_aliases.add(cte.alias.lower())
+                for tbl in stmt.find_all(sqlglot.exp.Table):
+                    if tbl.name and tbl.name.lower() not in cte_aliases:
+                        mentioned_tables.add(tbl.name.lower())
+
+        if mentioned_tables:
+            # Filter existing docs to only those whose table_name is mentioned
+            filtered_docs = [
+                doc for doc in schema_docs if doc.table_name.lower() in mentioned_tables
+            ]
+
+            # For any mentioned table not already in filtered_docs, try to fetch it
+            covered = {doc.table_name.lower() for doc in filtered_docs}
+            for table_name in mentioned_tables:
+                if table_name not in covered:
+                    fetched = services.schema_retriever.retrieve(req.question, req.db_id, top_k=1)
+                    if fetched:
+                        filtered_docs.append(fetched[0])
+                        covered.add(table_name)
+
+            schema_docs = filtered_docs
+    except Exception:
+        pass  # safe fallback: keep existing schema_docs unchanged
+
+    elapsed_ms = (time.monotonic() - start) * 1000
+    return _new_state(
+        state,
+        schema_docs=schema_docs,
+        step_timings=_merge_timings(state, "refine_schema_ms", elapsed_ms),
+    )
+
+
+def generate_final_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     assembled_prompt = state.get("assembled_prompt") or ""
     generated_sql = services.generator.generate(assembled_prompt)
@@ -107,18 +217,32 @@ def generate_sql_node(state: PipelineState, services: NodeServices) -> PipelineS
     return _new_state(
         state,
         generated_sql=generated_sql,
-        step_timings=_merge_timings(state, "generate_sql", elapsed_ms),
+        step_timings=_merge_timings(state, "generate_final_sql_ms", elapsed_ms),
     )
+
+
+# Backward-compatibility alias
+generate_sql_node = generate_final_sql_node
 
 
 def validate_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     generated_sql = state.get("generated_sql") or ""
     validation_result = services.validator.validate(generated_sql)
+
+    sql_guard = check_sql_guardrail(generated_sql)
+    flags = list(state.get("flags", []) or [])
+    if not sql_guard.passed:
+        validation_result = ValidationResult(valid=False, error=sql_guard.reason)
+        flags.append("sql_guardrail_blocked")
+    elif sql_guard.reason:
+        flags.append("sql_guardrail_warning")
+
     elapsed_ms = (time.monotonic() - start) * 1000
     return _new_state(
         state,
         validation_result=validation_result,
+        flags=flags,
         step_timings=_merge_timings(state, "validate_sql", elapsed_ms),
     )
 
@@ -195,8 +319,25 @@ def broaden_schema_node(state: PipelineState, services: NodeServices) -> Pipelin
 
 
 def build_response_node(state: PipelineState, services: NodeServices) -> PipelineState:
-    # Terminal node: pipeline extracts QueryResponse from state after graph completes.
-    return state
+    exec_result = state.get("execution_result")
+    flags = list(state.get("flags", []) or [])
+
+    partial_response = QueryResponse(
+        question=state["request"].question,
+        generated_sql=state.get("generated_sql") or "",
+        answer="",
+        execution_metadata=ExecutionMetadata(
+            success=exec_result.success if exec_result else False,
+            error=exec_result.error if exec_result else None,
+        )
+        if exec_result
+        else None,
+    )
+    out_guard = check_output_guardrail(partial_response)
+    if not out_guard.passed:
+        flags.append("uncertainty_disclosure")
+
+    return _new_state(state, flags=flags)
 
 
 def bind_nodes(services: NodeServices) -> dict[str, Callable[[PipelineState], PipelineState]]:
@@ -211,7 +352,10 @@ def bind_nodes(services: NodeServices) -> dict[str, Callable[[PipelineState], Pi
         ("retrieve_schema", retrieve_schema_node),
         ("retrieve_examples", retrieve_examples_node),
         ("assemble_prompt", assemble_prompt_node),
-        ("generate_sql", generate_sql_node),
+        ("assemble_draft_prompt", assemble_draft_prompt_node),
+        ("generate_draft_sql", generate_draft_sql_node),
+        ("refine_schema_context", refine_schema_context_node),
+        ("generate_final_sql", generate_final_sql_node),
         ("validate_sql", validate_sql_node),
         ("execute_sql", execute_sql_node),
         ("critique_failure", critique_failure_node),

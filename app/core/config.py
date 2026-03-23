@@ -1,3 +1,4 @@
+import functools
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,7 +23,10 @@ class AppSettings(BaseSettings):
     max_retries: int = 2
     agent_max_iterations: int = 10
     langsmith_project: str = "text2sql"
+    max_schema_docs: int = 10
+    max_example_docs: int = 5
 
 
+@functools.lru_cache
 def get_settings() -> AppSettings:
     return AppSettings()

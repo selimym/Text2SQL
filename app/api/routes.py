@@ -1,6 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.api.models import QueryRequest, QueryResponse
+from app.pipeline.guardrails import check_input_guardrail
 from app.pipeline.protocol import Pipeline
 
 router = APIRouter()
@@ -27,5 +28,8 @@ async def health_check() -> dict[str, str]:
 
 @router.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest) -> QueryResponse:
+    result = check_input_guardrail(request.question)
+    if not result.passed:
+        raise HTTPException(status_code=422, detail=result.reason)
     pipeline = get_pipeline()
     return pipeline.run(request)

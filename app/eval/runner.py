@@ -8,7 +8,14 @@ import structlog
 from app.api.models import QueryRequest
 from app.db.executor import SQLExecutor
 from app.eval.loader import load_dev_subset
-from app.eval.metrics import normalized_exact_match, result_set_match, schema_recall
+from app.eval.metrics import (
+    fewshot_table_overlap,
+    normalized_exact_match,
+    result_set_match,
+    schema_noise_ratio,
+    schema_precision,
+    schema_recall,
+)
 from app.pipeline.protocol import Pipeline
 
 _log = structlog.get_logger()
@@ -24,6 +31,9 @@ class EvalReport:
     exact_match_rate: float
     avg_schema_recall: float
     results: list[dict]  # type: ignore[type-arg]
+    avg_schema_precision: float = 0.0
+    avg_schema_noise_ratio: float = 0.0
+    avg_fewshot_table_overlap: float = 0.0
 
 
 def run_evaluation(
@@ -40,6 +50,9 @@ def run_evaluation(
     exec_acc_total = 0
     em_total = 0
     recall_total = 0.0
+    precision_total = 0.0
+    noise_total = 0.0
+    fewshot_total = 0.0
     executor = SQLExecutor()
 
     for ex in examples:
@@ -71,12 +84,22 @@ def run_evaluation(
             normalized_exact_match(resp.generated_sql, ex.gold_sql) if resp.generated_sql else False
         )
         recall = schema_recall(ex.gold_sql, resp.retrieved_schema_summary or [])
+        precision = schema_precision(ex.gold_sql, resp.retrieved_schema_summary or [])
+        noise = schema_noise_ratio(ex.gold_sql, resp.retrieved_schema_summary or [])
+        fewshot = (
+            fewshot_table_overlap(ex.gold_sql, resp.retrieved_example_sqls)
+            if resp.retrieved_example_sqls
+            else 0.0
+        )
 
         if exec_acc:
             exec_acc_total += 1
         if em:
             em_total += 1
         recall_total += recall
+        precision_total += precision
+        noise_total += noise
+        fewshot_total += fewshot
 
         results.append(
             {
@@ -88,6 +111,9 @@ def run_evaluation(
                 "execution_accuracy": exec_acc,
                 "exact_match": em,
                 "schema_recall": recall,
+                "schema_precision": precision,
+                "schema_noise_ratio": noise,
+                "fewshot_table_overlap": fewshot,
             }
         )
 
@@ -101,6 +127,9 @@ def run_evaluation(
         exact_match_rate=em_total / n if n else 0.0,
         avg_schema_recall=recall_total / n if n else 0.0,
         results=results,
+        avg_schema_precision=precision_total / n if n else 0.0,
+        avg_schema_noise_ratio=noise_total / n if n else 0.0,
+        avg_fewshot_table_overlap=fewshot_total / n if n else 0.0,
     )
 
 
@@ -120,5 +149,6 @@ if __name__ == "__main__":
     # To run: build the pipeline in main.py and call run_evaluation() directly.
     print(f"Evaluation complete. Report saved to {args.output}")
     print(
-        "Metrics reported: execution_success, execution_accuracy, exact_match_rate, avg_schema_recall"
+        "Metrics reported: execution_success, execution_accuracy, exact_match_rate, "
+        "avg_schema_recall, avg_schema_precision, avg_schema_noise_ratio, avg_fewshot_table_overlap"
     )
