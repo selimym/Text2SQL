@@ -182,17 +182,19 @@ def test_route_returns_422_on_input_guardrail_violation() -> None:
 # --- Integration: retrieval guardrail flag ---
 
 
-def test_retrieval_guardrail_failed_flag_on_no_schema() -> None:
+async def test_retrieval_guardrail_failed_flag_on_no_schema() -> None:
+    from unittest.mock import AsyncMock
+
     from app.pipeline.nodes import NodeServices, retrieve_examples_node
     from app.pipeline.state import PipelineState
     from app.retrieval.example_retriever import ExampleRetriever
     from app.retrieval.schema_retriever import SchemaRetriever
 
     schema_retriever = MagicMock(spec=SchemaRetriever)
-    schema_retriever.retrieve.return_value = []
+    schema_retriever.retrieve = AsyncMock(return_value=[])
 
     example_retriever = MagicMock(spec=ExampleRetriever)
-    example_retriever.retrieve.return_value = []
+    example_retriever.retrieve = AsyncMock(return_value=[])
 
     from app.api.models import QueryRequest
 
@@ -206,5 +208,5 @@ def test_retrieval_guardrail_failed_flag_on_no_schema() -> None:
     svc.example_retriever = example_retriever
     svc.schema_retriever = schema_retriever
 
-    result = retrieve_examples_node(state, svc)
+    result = await retrieve_examples_node(state, svc)
     assert "retrieval_guardrail_failed" in (result.get("flags") or [])

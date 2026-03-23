@@ -1,5 +1,6 @@
+import inspect
 from typing import cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.api.models import QueryRequest
 from app.db.executor import ExecutionResult
@@ -46,29 +47,31 @@ def make_base_state(**kwargs: object) -> PipelineState:
 def make_services(**overrides: object) -> NodeServices:
     """Return a NodeServices instance built from MagicMocks."""
     schema_retriever = MagicMock()
-    schema_retriever.retrieve.return_value = [make_schema_doc()]
+    schema_retriever.retrieve = AsyncMock(return_value=[make_schema_doc()])
 
     example_retriever = MagicMock()
-    example_retriever.retrieve.return_value = [make_example_doc()]
+    example_retriever.retrieve = AsyncMock(return_value=[make_example_doc()])
 
     assembler = MagicMock()
     assembler.assemble.return_value = "assembled prompt"
 
     generator = MagicMock()
-    generator.generate.return_value = "SELECT COUNT(*) FROM singer"
+    generator.agenerate = AsyncMock(return_value="SELECT COUNT(*) FROM singer")
 
     validator = MagicMock()
     validator.validate.return_value = ValidationResult(valid=True)
 
     executor = MagicMock()
-    executor.execute.return_value = ExecutionResult(
-        success=True, rows=[[1]], column_names=["count"], row_count=1, latency_ms=5.0
+    executor.execute = AsyncMock(
+        return_value=ExecutionResult(
+            success=True, rows=[[1]], column_names=["count"], row_count=1, latency_ms=5.0
+        )
     )
 
     llm = MagicMock()
     ai_message = MagicMock()
     ai_message.content = "generation_fault"
-    llm.invoke.return_value = ai_message
+    llm.ainvoke = AsyncMock(return_value=ai_message)
 
     svc = NodeServices(
         schema_retriever=schema_retriever,
@@ -90,45 +93,45 @@ def make_services(**overrides: object) -> NodeServices:
 # ---------------------------------------------------------------------------
 
 
-def test_retrieve_schema_node_updates_schema_docs() -> None:
+async def test_retrieve_schema_node_updates_schema_docs() -> None:
     from app.pipeline.nodes import retrieve_schema_node
 
     state = make_base_state()
     svc = make_services()
-    result = retrieve_schema_node(state, svc)
+    result = await retrieve_schema_node(state, svc)
     assert "schema_docs" in result
     assert len(result["schema_docs"]) == 1
     assert result["schema_docs"][0].table_name == "singer"
 
 
-def test_retrieve_schema_node_calls_retriever_with_correct_args() -> None:
+async def test_retrieve_schema_node_calls_retriever_with_correct_args() -> None:
     from app.pipeline.nodes import retrieve_schema_node
 
     state = make_base_state()
     svc = make_services()
-    retrieve_schema_node(state, svc)
-    cast(MagicMock, svc.schema_retriever).retrieve.assert_called_once_with(
+    await retrieve_schema_node(state, svc)
+    cast(AsyncMock, svc.schema_retriever.retrieve).assert_called_once_with(
         "How many singers?", "concert_singer", state["request"].top_k_schema
     )
 
 
-def test_retrieve_schema_node_updates_step_timings() -> None:
+async def test_retrieve_schema_node_updates_step_timings() -> None:
     from app.pipeline.nodes import retrieve_schema_node
 
     state = make_base_state()
     svc = make_services()
-    result = retrieve_schema_node(state, svc)
+    result = await retrieve_schema_node(state, svc)
     assert "step_timings" in result
     assert "retrieve_schema" in result["step_timings"]
     assert result["step_timings"]["retrieve_schema"] >= 0.0
 
 
-def test_retrieve_schema_node_preserves_existing_timings() -> None:
+async def test_retrieve_schema_node_preserves_existing_timings() -> None:
     from app.pipeline.nodes import retrieve_schema_node
 
     state = make_base_state(step_timings={"previous_step": 12.5})
     svc = make_services()
-    result = retrieve_schema_node(state, svc)
+    result = await retrieve_schema_node(state, svc)
     assert result["step_timings"]["previous_step"] == 12.5
     assert "retrieve_schema" in result["step_timings"]
 
@@ -138,22 +141,22 @@ def test_retrieve_schema_node_preserves_existing_timings() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_retrieve_examples_node_updates_example_docs() -> None:
+async def test_retrieve_examples_node_updates_example_docs() -> None:
     from app.pipeline.nodes import retrieve_examples_node
 
     state = make_base_state()
     svc = make_services()
-    result = retrieve_examples_node(state, svc)
+    result = await retrieve_examples_node(state, svc)
     assert "example_docs" in result
     assert len(result["example_docs"]) == 1
 
 
-def test_retrieve_examples_node_updates_step_timings() -> None:
+async def test_retrieve_examples_node_updates_step_timings() -> None:
     from app.pipeline.nodes import retrieve_examples_node
 
     state = make_base_state()
     svc = make_services()
-    result = retrieve_examples_node(state, svc)
+    result = await retrieve_examples_node(state, svc)
     assert "retrieve_examples" in result["step_timings"]
 
 
@@ -162,7 +165,7 @@ def test_retrieve_examples_node_updates_step_timings() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_assemble_prompt_node_without_critique_uses_normal_prompt() -> None:
+async def test_assemble_prompt_node_without_critique_uses_normal_prompt() -> None:
     from app.pipeline.nodes import assemble_prompt_node
 
     state = make_base_state(
@@ -170,12 +173,12 @@ def test_assemble_prompt_node_without_critique_uses_normal_prompt() -> None:
         example_docs=[make_example_doc()],
     )
     svc = make_services()
-    result = assemble_prompt_node(state, svc)
+    result = await assemble_prompt_node(state, svc)
     assert result["assembled_prompt"] == "assembled prompt"
     cast(MagicMock, svc.assembler).assemble.assert_called_once()
 
 
-def test_assemble_prompt_node_with_critique_uses_repair_prompt() -> None:
+async def test_assemble_prompt_node_with_critique_uses_repair_prompt() -> None:
     from app.pipeline.nodes import assemble_prompt_node
 
     state = make_base_state(
@@ -187,7 +190,7 @@ def test_assemble_prompt_node_with_critique_uses_repair_prompt() -> None:
     with patch(
         "app.pipeline.nodes.build_repair_prompt", return_value="repair prompt"
     ) as mock_repair:
-        result = assemble_prompt_node(state, svc)
+        result = await assemble_prompt_node(state, svc)
         mock_repair.assert_called_once_with(
             question=state["request"].question,
             schema_docs=state.get("schema_docs"),
@@ -197,12 +200,12 @@ def test_assemble_prompt_node_with_critique_uses_repair_prompt() -> None:
         assert result["assembled_prompt"] == "repair prompt"
 
 
-def test_assemble_prompt_node_updates_step_timings() -> None:
+async def test_assemble_prompt_node_updates_step_timings() -> None:
     from app.pipeline.nodes import assemble_prompt_node
 
     state = make_base_state(schema_docs=[make_schema_doc()], example_docs=[])
     svc = make_services()
-    result = assemble_prompt_node(state, svc)
+    result = await assemble_prompt_node(state, svc)
     assert "assemble_prompt" in result["step_timings"]
 
 
@@ -211,21 +214,21 @@ def test_assemble_prompt_node_updates_step_timings() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_generate_final_sql_node_updates_generated_sql() -> None:
+async def test_generate_final_sql_node_updates_generated_sql() -> None:
     from app.pipeline.nodes import generate_final_sql_node
 
     state = make_base_state(assembled_prompt="some prompt")
     svc = make_services()
-    result = generate_final_sql_node(state, svc)
+    result = await generate_final_sql_node(state, svc)
     assert result["generated_sql"] == "SELECT COUNT(*) FROM singer"
 
 
-def test_generate_final_sql_node_updates_step_timings() -> None:
+async def test_generate_final_sql_node_updates_step_timings() -> None:
     from app.pipeline.nodes import generate_final_sql_node
 
     state = make_base_state(assembled_prompt="some prompt")
     svc = make_services()
-    result = generate_final_sql_node(state, svc)
+    result = await generate_final_sql_node(state, svc)
     assert "generate_final_sql_ms" in result["step_timings"]
 
 
@@ -234,22 +237,22 @@ def test_generate_final_sql_node_updates_step_timings() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_validate_sql_node_updates_validation_result() -> None:
+async def test_validate_sql_node_updates_validation_result() -> None:
     from app.pipeline.nodes import validate_sql_node
 
     state = make_base_state(generated_sql="SELECT 1")
     svc = make_services()
-    result = validate_sql_node(state, svc)
+    result = await validate_sql_node(state, svc)
     assert "validation_result" in result
     assert result["validation_result"].valid is True
 
 
-def test_validate_sql_node_updates_step_timings() -> None:
+async def test_validate_sql_node_updates_step_timings() -> None:
     from app.pipeline.nodes import validate_sql_node
 
     state = make_base_state(generated_sql="SELECT 1")
     svc = make_services()
-    result = validate_sql_node(state, svc)
+    result = await validate_sql_node(state, svc)
     assert "validate_sql" in result["step_timings"]
 
 
@@ -258,37 +261,37 @@ def test_validate_sql_node_updates_step_timings() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_execute_sql_node_updates_execution_result() -> None:
+async def test_execute_sql_node_updates_execution_result() -> None:
     from app.pipeline.nodes import execute_sql_node
 
     state = make_base_state(generated_sql="SELECT COUNT(*) FROM singer")
     svc = make_services()
-    result = execute_sql_node(state, svc)
+    result = await execute_sql_node(state, svc)
     assert "execution_result" in result
     assert result["execution_result"].success is True
 
 
-def test_execute_sql_node_builds_db_path_correctly() -> None:
+async def test_execute_sql_node_builds_db_path_correctly() -> None:
     from app.pipeline.nodes import execute_sql_node
 
     state = make_base_state(generated_sql="SELECT 1")
     svc = make_services()
-    execute_sql_node(state, svc)
+    await execute_sql_node(state, svc)
     # Should construct path from spider_data_dir + db_id + db_id.sqlite
-    mock_executor = cast(MagicMock, svc.executor)
-    mock_executor.execute.assert_called_once()
-    call_args = mock_executor.execute.call_args
+    mock_executor = cast(AsyncMock, svc.executor.execute)
+    mock_executor.assert_called_once()
+    call_args = mock_executor.call_args
     db_path_arg = call_args[0][1] if call_args[0] else call_args[1]["db_path"]
     assert "concert_singer" in db_path_arg
     assert db_path_arg.endswith(".sqlite")
 
 
-def test_execute_sql_node_updates_step_timings() -> None:
+async def test_execute_sql_node_updates_step_timings() -> None:
     from app.pipeline.nodes import execute_sql_node
 
     state = make_base_state(generated_sql="SELECT 1")
     svc = make_services()
-    result = execute_sql_node(state, svc)
+    result = await execute_sql_node(state, svc)
     assert "execute_sql" in result["step_timings"]
 
 
@@ -297,13 +300,13 @@ def test_execute_sql_node_updates_step_timings() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_critique_failure_node_llm_returns_retrieval_fault() -> None:
+async def test_critique_failure_node_llm_returns_retrieval_fault() -> None:
     from app.pipeline.nodes import critique_failure_node
 
     ai_message = MagicMock()
     ai_message.content = "retrieval_fault"
     llm = MagicMock()
-    llm.invoke.return_value = ai_message
+    llm.ainvoke = AsyncMock(return_value=ai_message)
 
     state = make_base_state(
         generated_sql="SELECT x FROM missing_table",
@@ -312,19 +315,19 @@ def test_critique_failure_node_llm_returns_retrieval_fault() -> None:
         ),
     )
     svc = make_services(llm=llm)
-    result = critique_failure_node(state, svc)
+    result = await critique_failure_node(state, svc)
     assert result["fault_category"] == "retrieval_fault"
     assert result["critique_text"] is not None
     assert len(result["critique_text"]) > 0
 
 
-def test_critique_failure_node_llm_returns_generation_fault() -> None:
+async def test_critique_failure_node_llm_returns_generation_fault() -> None:
     from app.pipeline.nodes import critique_failure_node
 
     ai_message = MagicMock()
     ai_message.content = "generation_fault"
     llm = MagicMock()
-    llm.invoke.return_value = ai_message
+    llm.ainvoke = AsyncMock(return_value=ai_message)
 
     state = make_base_state(
         generated_sql="SELECT wrong FROM singer",
@@ -333,15 +336,15 @@ def test_critique_failure_node_llm_returns_generation_fault() -> None:
         ),
     )
     svc = make_services(llm=llm)
-    result = critique_failure_node(state, svc)
+    result = await critique_failure_node(state, svc)
     assert result["fault_category"] == "generation_fault"
 
 
-def test_critique_failure_node_llm_error_defaults_to_generation_fault() -> None:
+async def test_critique_failure_node_llm_error_defaults_to_generation_fault() -> None:
     from app.pipeline.nodes import critique_failure_node
 
     llm = MagicMock()
-    llm.invoke.side_effect = RuntimeError("LLM unavailable")
+    llm.ainvoke = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
 
     state = make_base_state(
         generated_sql="SELECT 1",
@@ -350,11 +353,11 @@ def test_critique_failure_node_llm_error_defaults_to_generation_fault() -> None:
         ),
     )
     svc = make_services(llm=llm)
-    result = critique_failure_node(state, svc)
+    result = await critique_failure_node(state, svc)
     assert result["fault_category"] == "generation_fault"
 
 
-def test_critique_failure_node_increments_retry_count() -> None:
+async def test_critique_failure_node_increments_retry_count() -> None:
     from app.pipeline.nodes import critique_failure_node
 
     state = make_base_state(
@@ -363,11 +366,11 @@ def test_critique_failure_node_increments_retry_count() -> None:
         retry_count=1,
     )
     svc = make_services()
-    result = critique_failure_node(state, svc)
+    result = await critique_failure_node(state, svc)
     assert result["retry_count"] == 2
 
 
-def test_critique_failure_node_increments_retry_count_from_zero() -> None:
+async def test_critique_failure_node_increments_retry_count_from_zero() -> None:
     from app.pipeline.nodes import critique_failure_node
 
     state = make_base_state(
@@ -375,11 +378,11 @@ def test_critique_failure_node_increments_retry_count_from_zero() -> None:
         execution_result=ExecutionResult(success=False, error="err"),
     )
     svc = make_services()
-    result = critique_failure_node(state, svc)
+    result = await critique_failure_node(state, svc)
     assert result["retry_count"] == 1
 
 
-def test_critique_failure_node_updates_step_timings() -> None:
+async def test_critique_failure_node_updates_step_timings() -> None:
     from app.pipeline.nodes import critique_failure_node
 
     state = make_base_state(
@@ -387,7 +390,7 @@ def test_critique_failure_node_updates_step_timings() -> None:
         execution_result=ExecutionResult(success=False, error="err"),
     )
     svc = make_services()
-    result = critique_failure_node(state, svc)
+    result = await critique_failure_node(state, svc)
     assert "critique_failure" in result["step_timings"]
     assert result["step_timings"]["critique_failure"] >= 0.0
 
@@ -397,36 +400,36 @@ def test_critique_failure_node_updates_step_timings() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_broaden_schema_node_calls_retriever_with_broader_top_k() -> None:
+async def test_broaden_schema_node_calls_retriever_with_broader_top_k() -> None:
     from app.pipeline.nodes import broaden_schema_node
 
     state = make_base_state(schema_docs=[make_schema_doc()])
     svc = make_services()
-    broaden_schema_node(state, svc)
+    await broaden_schema_node(state, svc)
     expected_top_k = state["request"].top_k_schema + 3
-    cast(MagicMock, svc.schema_retriever).retrieve.assert_called_once_with(
+    cast(AsyncMock, svc.schema_retriever.retrieve).assert_called_once_with(
         state["request"].question, state["request"].db_id, expected_top_k
     )
 
 
-def test_broaden_schema_node_replaces_schema_docs() -> None:
+async def test_broaden_schema_node_replaces_schema_docs() -> None:
     from app.pipeline.nodes import broaden_schema_node
 
     new_docs = [make_schema_doc("concert"), make_schema_doc("singer")]
     schema_retriever = MagicMock()
-    schema_retriever.retrieve.return_value = new_docs
+    schema_retriever.retrieve = AsyncMock(return_value=new_docs)
     state = make_base_state(schema_docs=[make_schema_doc("old_table")])
     svc = make_services(schema_retriever=schema_retriever)
-    result = broaden_schema_node(state, svc)
+    result = await broaden_schema_node(state, svc)
     assert result["schema_docs"] == new_docs
 
 
-def test_broaden_schema_node_updates_step_timings() -> None:
+async def test_broaden_schema_node_updates_step_timings() -> None:
     from app.pipeline.nodes import broaden_schema_node
 
     state = make_base_state(schema_docs=[make_schema_doc()])
     svc = make_services()
-    result = broaden_schema_node(state, svc)
+    result = await broaden_schema_node(state, svc)
     assert "broaden_schema" in result["step_timings"]
     assert result["step_timings"]["broaden_schema"] >= 0.0
 
@@ -436,7 +439,7 @@ def test_broaden_schema_node_updates_step_timings() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_response_node_returns_state_unchanged() -> None:
+async def test_build_response_node_returns_state_unchanged() -> None:
     from app.pipeline.nodes import build_response_node
 
     state = make_base_state(
@@ -444,7 +447,7 @@ def test_build_response_node_returns_state_unchanged() -> None:
         execution_result=ExecutionResult(success=True, rows=[[1]], column_names=["c"], row_count=1),
     )
     svc = make_services()
-    result = build_response_node(state, svc)
+    result = await build_response_node(state, svc)
     assert result["generated_sql"] == state["generated_sql"]
     assert result["request"] is state["request"]
 
@@ -477,15 +480,13 @@ def test_bind_nodes_returns_all_nodes() -> None:
 
 
 def test_bind_nodes_callables_accept_only_state() -> None:
-    import inspect
-
     from app.pipeline.nodes import bind_nodes
 
     svc = make_services()
     bound = bind_nodes(svc)
     for name, fn in bound.items():
         sig = inspect.signature(fn)
-        # After partial binding, only `state` should remain as a required parameter
+        # After binding, only `state` should remain as a required parameter
         free_params = [p for p in sig.parameters.values() if p.default is inspect.Parameter.empty]
         msg = f"Node '{name}' has {len(free_params)} free parameters after binding; expected 1"
         assert len(free_params) == 1, msg
