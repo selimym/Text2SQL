@@ -4,7 +4,7 @@ All tests use a real DeterministicGraphPipeline with mocked NodeServices so
 that the actual LangGraph wiring is exercised.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from app.api.models import QueryRequest
 from app.db.executor import ExecutionResult
@@ -44,10 +44,10 @@ def make_services(
     from app.retrieval.schema_retriever import SchemaRetriever
 
     schema_retriever = MagicMock(spec=SchemaRetriever)
-    schema_retriever.retrieve.return_value = [schema_doc]
+    schema_retriever.retrieve = AsyncMock(return_value=[schema_doc])
 
     example_retriever = MagicMock(spec=ExampleRetriever)
-    example_retriever.retrieve.return_value = [example_doc]
+    example_retriever.retrieve = AsyncMock(return_value=[example_doc])
 
     assembler = MagicMock(spec=PromptAssembler)
     assembler.assemble.return_value = "assembled prompt"
@@ -55,10 +55,10 @@ def make_services(
     llm = MagicMock()
     llm_response = MagicMock()
     llm_response.content = critique_response
-    llm.invoke.return_value = llm_response
+    llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.generate.return_value = generated_sql
+    generator.agenerate = AsyncMock(return_value=generated_sql)
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)
@@ -67,11 +67,13 @@ def make_services(
     )
 
     executor = MagicMock(spec=SQLExecutor)
-    executor.execute.return_value = ExecutionResult(
-        success=exec_success,
-        rows=[["1"]] if exec_success else [],
-        row_count=1 if exec_success else 0,
-        error=exec_error,
+    executor.execute = AsyncMock(
+        return_value=ExecutionResult(
+            success=exec_success,
+            rows=[["1"]] if exec_success else [],
+            row_count=1 if exec_success else 0,
+            error=exec_error,
+        )
     )
 
     return NodeServices(
@@ -97,13 +99,13 @@ def make_pipeline(services: NodeServices, max_retries: int = 2):  # type: ignore
 # ---------------------------------------------------------------------------
 
 
-def test_happy_path() -> None:
+async def test_happy_path() -> None:
     """Valid SQL, execution success → correct sql in response, no max_retries_reached flag."""
     services = make_services(generated_sql="SELECT COUNT(*) FROM singers")
     pipeline = make_pipeline(services)
     request = make_request()
 
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert response.generated_sql == "SELECT COUNT(*) FROM singers"
     assert "max_retries_reached" not in response.flags
@@ -111,7 +113,7 @@ def test_happy_path() -> None:
     assert response.execution_metadata.success is True
 
 
-def test_validation_fail_generation_fault() -> None:
+async def test_validation_fail_generation_fault() -> None:
     """Validation fails first time, critique returns 'generation_fault', second attempt succeeds."""
     from app.db.executor import SQLExecutor
     from app.db.schema_doc import SchemaDocument
@@ -128,10 +130,10 @@ def test_validation_fail_generation_fault() -> None:
     )
 
     schema_retriever = MagicMock(spec=SchemaRetriever)
-    schema_retriever.retrieve.return_value = [schema_doc]
+    schema_retriever.retrieve = AsyncMock(return_value=[schema_doc])
 
     example_retriever = MagicMock(spec=ExampleRetriever)
-    example_retriever.retrieve.return_value = [example_doc]
+    example_retriever.retrieve = AsyncMock(return_value=[example_doc])
 
     assembler = MagicMock(spec=PromptAssembler)
     assembler.assemble.return_value = "assembled prompt"
@@ -139,10 +141,10 @@ def test_validation_fail_generation_fault() -> None:
     llm = MagicMock()
     llm_response = MagicMock()
     llm_response.content = "generation_fault"
-    llm.invoke.return_value = llm_response
+    llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.generate.return_value = "SELECT 1"
+    generator.agenerate = AsyncMock(return_value="SELECT 1")
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)
@@ -153,7 +155,9 @@ def test_validation_fail_generation_fault() -> None:
     ]
 
     executor = MagicMock(spec=SQLExecutor)
-    executor.execute.return_value = ExecutionResult(success=True, rows=[["1"]], row_count=1)
+    executor.execute = AsyncMock(
+        return_value=ExecutionResult(success=True, rows=[["1"]], row_count=1)
+    )
 
     services = NodeServices(
         schema_retriever=schema_retriever,
@@ -168,13 +172,13 @@ def test_validation_fail_generation_fault() -> None:
     pipeline = make_pipeline(services, max_retries=2)
     request = make_request()
 
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert response.retry_count == 1
     assert "max_retries_reached" not in response.flags
 
 
-def test_validation_fail_retrieval_fault() -> None:
+async def test_validation_fail_retrieval_fault() -> None:
     """Validation fails with retrieval_fault → broaden_schema is called → second attempt succeeds."""
     from app.db.executor import SQLExecutor
     from app.db.schema_doc import SchemaDocument
@@ -195,13 +199,15 @@ def test_validation_fail_retrieval_fault() -> None:
     broader_schema_doc = SchemaDocument(
         db_id="test_db", table_name="concerts", columns=[], foreign_keys=[]
     )
-    schema_retriever.retrieve.side_effect = [
-        [schema_doc],  # retrieve_schema initial
-        [schema_doc, broader_schema_doc],  # broaden_schema call
-    ]
+    schema_retriever.retrieve = AsyncMock(
+        side_effect=[
+            [schema_doc],  # retrieve_schema initial
+            [schema_doc, broader_schema_doc],  # broaden_schema call
+        ]
+    )
 
     example_retriever = MagicMock(spec=ExampleRetriever)
-    example_retriever.retrieve.return_value = [example_doc]
+    example_retriever.retrieve = AsyncMock(return_value=[example_doc])
 
     assembler = MagicMock(spec=PromptAssembler)
     assembler.assemble.return_value = "assembled prompt"
@@ -209,10 +215,10 @@ def test_validation_fail_retrieval_fault() -> None:
     llm = MagicMock()
     llm_response = MagicMock()
     llm_response.content = "retrieval_fault"
-    llm.invoke.return_value = llm_response
+    llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.generate.return_value = "SELECT 1"
+    generator.agenerate = AsyncMock(return_value="SELECT 1")
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)
@@ -223,7 +229,9 @@ def test_validation_fail_retrieval_fault() -> None:
     ]
 
     executor = MagicMock(spec=SQLExecutor)
-    executor.execute.return_value = ExecutionResult(success=True, rows=[["1"]], row_count=1)
+    executor.execute = AsyncMock(
+        return_value=ExecutionResult(success=True, rows=[["1"]], row_count=1)
+    )
 
     services = NodeServices(
         schema_retriever=schema_retriever,
@@ -238,26 +246,26 @@ def test_validation_fail_retrieval_fault() -> None:
     pipeline = make_pipeline(services, max_retries=2)
     request = make_request()
 
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     # broaden_schema was called (second retrieve call happened)
     assert schema_retriever.retrieve.call_count == 2
     assert response.retry_count == 1
 
 
-def test_max_retries_reached_validation() -> None:
+async def test_max_retries_reached_validation() -> None:
     """Validation always fails → after max_retries exhausted, max_retries_reached in flags."""
     services = make_services(validation_valid=False)
     # Override validator to always fail
     pipeline = make_pipeline(services, max_retries=1)
     request = make_request()
 
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert "max_retries_reached" in response.flags
 
 
-def test_execution_fail_triggers_repair() -> None:
+async def test_execution_fail_triggers_repair() -> None:
     """Execution fails first time → repair loop triggers → retry_count == 1 in response."""
     from app.db.executor import SQLExecutor
     from app.db.schema_doc import SchemaDocument
@@ -274,10 +282,10 @@ def test_execution_fail_triggers_repair() -> None:
     )
 
     schema_retriever = MagicMock(spec=SchemaRetriever)
-    schema_retriever.retrieve.return_value = [schema_doc]
+    schema_retriever.retrieve = AsyncMock(return_value=[schema_doc])
 
     example_retriever = MagicMock(spec=ExampleRetriever)
-    example_retriever.retrieve.return_value = [example_doc]
+    example_retriever.retrieve = AsyncMock(return_value=[example_doc])
 
     assembler = MagicMock(spec=PromptAssembler)
     assembler.assemble.return_value = "assembled prompt"
@@ -285,10 +293,10 @@ def test_execution_fail_triggers_repair() -> None:
     llm = MagicMock()
     llm_response = MagicMock()
     llm_response.content = "generation_fault"
-    llm.invoke.return_value = llm_response
+    llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.generate.return_value = "SELECT 1"
+    generator.agenerate = AsyncMock(return_value="SELECT 1")
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)
@@ -296,10 +304,12 @@ def test_execution_fail_triggers_repair() -> None:
 
     executor = MagicMock(spec=SQLExecutor)
     # First call fails, second call succeeds
-    executor.execute.side_effect = [
-        ExecutionResult(success=False, rows=[], row_count=0, error="no such table"),
-        ExecutionResult(success=True, rows=[["1"]], row_count=1),
-    ]
+    executor.execute = AsyncMock(
+        side_effect=[
+            ExecutionResult(success=False, rows=[], row_count=0, error="no such table"),
+            ExecutionResult(success=True, rows=[["1"]], row_count=1),
+        ]
+    )
 
     services = NodeServices(
         schema_retriever=schema_retriever,
@@ -314,18 +324,18 @@ def test_execution_fail_triggers_repair() -> None:
     pipeline = make_pipeline(services, max_retries=2)
     request = make_request()
 
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert response.retry_count == 1
 
 
-def test_step_timings_populated() -> None:
+async def test_step_timings_populated() -> None:
     """Final state has step_timings dict with timing keys."""
     services = make_services()
     pipeline = make_pipeline(services)
     request = make_request()
 
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert response.step_timings is not None
     assert len(response.step_timings) > 0
@@ -345,18 +355,18 @@ def test_step_timings_populated() -> None:
         assert key in response.step_timings, f"Missing timing key: {key}"
 
 
-def test_two_stage_draft_sql_populated() -> None:
+async def test_two_stage_draft_sql_populated() -> None:
     """Happy path: response.draft_sql is populated after 2-stage generation."""
     services = make_services(generated_sql="SELECT COUNT(*) FROM singers")
     pipeline = make_pipeline(services)
     request = make_request()
 
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert response.draft_sql is not None
 
 
-def test_repair_loop_uses_assemble_prompt_not_draft() -> None:
+async def test_repair_loop_uses_assemble_prompt_not_draft() -> None:
     """Repair loop goes through assemble_prompt, not assemble_draft_prompt.
 
     assemble_draft_prompt_node calls assembler.assemble once (stage-1).
@@ -379,10 +389,10 @@ def test_repair_loop_uses_assemble_prompt_not_draft() -> None:
     )
 
     schema_retriever = MagicMock(spec=SchemaRetriever)
-    schema_retriever.retrieve.return_value = [schema_doc]
+    schema_retriever.retrieve = AsyncMock(return_value=[schema_doc])
 
     example_retriever = MagicMock(spec=ExampleRetriever)
-    example_retriever.retrieve.return_value = [example_doc]
+    example_retriever.retrieve = AsyncMock(return_value=[example_doc])
 
     assembler = MagicMock(spec=PromptAssembler)
     assembler.assemble.return_value = "assembled prompt"
@@ -390,10 +400,10 @@ def test_repair_loop_uses_assemble_prompt_not_draft() -> None:
     llm = MagicMock()
     llm_response = MagicMock()
     llm_response.content = "generation_fault"
-    llm.invoke.return_value = llm_response
+    llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.generate.return_value = "SELECT 1"
+    generator.agenerate = AsyncMock(return_value="SELECT 1")
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)
@@ -404,7 +414,9 @@ def test_repair_loop_uses_assemble_prompt_not_draft() -> None:
     ]
 
     executor = MagicMock(spec=SQLExecutor)
-    executor.execute.return_value = ExecutionResult(success=True, rows=[["1"]], row_count=1)
+    executor.execute = AsyncMock(
+        return_value=ExecutionResult(success=True, rows=[["1"]], row_count=1)
+    )
 
     services = NodeServices(
         schema_retriever=schema_retriever,
@@ -419,7 +431,7 @@ def test_repair_loop_uses_assemble_prompt_not_draft() -> None:
     pipeline = make_pipeline(services, max_retries=2)
     request = make_request()
 
-    pipeline.run(request)
+    await pipeline.run(request)
 
     # assembler.assemble is called twice in the happy-path of stage-1:
     #   1. assemble_draft_prompt_node (always calls assembler.assemble)
@@ -430,7 +442,7 @@ def test_repair_loop_uses_assemble_prompt_not_draft() -> None:
     assert assembler.assemble.call_count == 2
 
 
-def test_max_retries_reached_execution() -> None:
+async def test_max_retries_reached_execution() -> None:
     """Execution always fails → after max_retries exhausted, max_retries_reached in flags."""
     from app.db.executor import SQLExecutor
     from app.db.schema_doc import SchemaDocument
@@ -447,10 +459,10 @@ def test_max_retries_reached_execution() -> None:
     )
 
     schema_retriever = MagicMock(spec=SchemaRetriever)
-    schema_retriever.retrieve.return_value = [schema_doc]
+    schema_retriever.retrieve = AsyncMock(return_value=[schema_doc])
 
     example_retriever = MagicMock(spec=ExampleRetriever)
-    example_retriever.retrieve.return_value = [example_doc]
+    example_retriever.retrieve = AsyncMock(return_value=[example_doc])
 
     assembler = MagicMock(spec=PromptAssembler)
     assembler.assemble.return_value = "assembled prompt"
@@ -458,10 +470,10 @@ def test_max_retries_reached_execution() -> None:
     llm = MagicMock()
     llm_response = MagicMock()
     llm_response.content = "generation_fault"
-    llm.invoke.return_value = llm_response
+    llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.generate.return_value = "SELECT bad"
+    generator.agenerate = AsyncMock(return_value="SELECT bad")
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)
@@ -469,8 +481,8 @@ def test_max_retries_reached_execution() -> None:
 
     executor = MagicMock(spec=SQLExecutor)
     # All execution attempts fail — exhausts the retry budget (max_retries=1 → 2 total attempts)
-    executor.execute.return_value = ExecutionResult(
-        success=False, rows=[], row_count=0, error="no such table"
+    executor.execute = AsyncMock(
+        return_value=ExecutionResult(success=False, rows=[], row_count=0, error="no such table")
     )
 
     services = NodeServices(
@@ -486,6 +498,6 @@ def test_max_retries_reached_execution() -> None:
     pipeline = make_pipeline(services, max_retries=1)
     request = make_request()
 
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert "max_retries_reached" in response.flags
