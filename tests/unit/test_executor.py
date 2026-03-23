@@ -26,28 +26,28 @@ def populated_db(sqlite_db_path: str) -> str:
     return sqlite_db_path
 
 
-def test_successful_select(executor: SQLExecutor, populated_db: str) -> None:
-    result = executor.execute("SELECT * FROM singer", populated_db)
+async def test_successful_select(executor: SQLExecutor, populated_db: str) -> None:
+    result = await executor.execute("SELECT * FROM singer", populated_db)
     assert result.success is True
     assert result.row_count == 3
     assert len(result.rows) == 3
     assert result.column_names == ["singer_id", "name"]
 
 
-def test_row_cap_truncates(small_executor: SQLExecutor, populated_db: str) -> None:
-    result = small_executor.execute("SELECT * FROM singer", populated_db)
+async def test_row_cap_truncates(small_executor: SQLExecutor, populated_db: str) -> None:
+    result = await small_executor.execute("SELECT * FROM singer", populated_db)
     assert result.success is True
     assert result.row_count == 2  # capped at max_rows=2
     assert result.error is not None  # error message about truncation
 
 
-def test_invalid_sql_returns_error(executor: SQLExecutor, sqlite_db_path: str) -> None:
-    result = executor.execute("SELECT * FROM nonexistent_table", sqlite_db_path)
+async def test_invalid_sql_returns_error(executor: SQLExecutor, sqlite_db_path: str) -> None:
+    result = await executor.execute("SELECT * FROM nonexistent_table", sqlite_db_path)
     assert result.success is False
     assert result.error is not None
     assert result.error_category == "execution_error"
 
 
-def test_latency_recorded(executor: SQLExecutor, populated_db: str) -> None:
-    result = executor.execute("SELECT * FROM singer", populated_db)
+async def test_latency_recorded(executor: SQLExecutor, populated_db: str) -> None:
+    result = await executor.execute("SELECT * FROM singer", populated_db)
     assert result.latency_ms > 0
