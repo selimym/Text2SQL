@@ -37,7 +37,7 @@ class ComparisonReport:
         return json.dumps(self.to_dict(), indent=2)
 
 
-def compare_variants(
+async def compare_variants(
     pipelines: Mapping[str, Pipeline],
     spider_data_dir: str,
     db_filter: list[str] | None = None,
@@ -51,7 +51,7 @@ def compare_variants(
 
     for variant_name, pipeline in pipelines.items():
         start = time.monotonic()
-        report = run_evaluation(pipeline, spider_data_dir, db_filter=db_filter, limit=limit)
+        report = await run_evaluation(pipeline, spider_data_dir, db_filter=db_filter, limit=limit)
         elapsed = time.monotonic() - start
         variant_reports.append(
             VariantReport(
