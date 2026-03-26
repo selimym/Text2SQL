@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -30,7 +30,7 @@ async def test_query_endpoint(app: FastAPI) -> None:
     )
     with patch("app.api.routes.get_pipeline") as mock_get_pipeline:
         mock_pipeline = MagicMock()
-        mock_pipeline.run.return_value = mock_response
+        mock_pipeline.run = AsyncMock(return_value=mock_response)
         mock_get_pipeline.return_value = mock_pipeline
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(

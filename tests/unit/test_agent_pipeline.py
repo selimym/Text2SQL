@@ -1,5 +1,5 @@
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -38,10 +38,12 @@ def make_tool_context(
         valid=validation_valid,
         error=None if validation_valid else "syntax error",
     )
-    mock_executor.execute.return_value = ExecutionResult(
-        success=exec_success,
-        rows=[["1"]] if exec_success else [],
-        row_count=1 if exec_success else 0,
+    mock_executor.execute = AsyncMock(
+        return_value=ExecutionResult(
+            success=exec_success,
+            rows=[["1"]] if exec_success else [],
+            row_count=1 if exec_success else 0,
+        )
     )
     return ToolContext(
         schema_retriever=MagicMock(spec=SchemaRetriever),
@@ -53,11 +55,11 @@ def make_tool_context(
 
 
 @patch("app.pipeline.agent_pipeline.create_react_agent")
-def test_happy_path(mock_cra: MagicMock) -> None:
+async def test_happy_path(mock_cra: MagicMock) -> None:
     from app.pipeline.agent_pipeline import AgentPipeline
 
     mock_agent = MagicMock()
-    mock_agent.invoke.return_value = make_agent_result("SELECT COUNT(*) FROM singers")
+    mock_agent.ainvoke = AsyncMock(return_value=make_agent_result("SELECT COUNT(*) FROM singers"))
     mock_cra.return_value = mock_agent
 
     ctx = make_tool_context()
@@ -65,19 +67,19 @@ def test_happy_path(mock_cra: MagicMock) -> None:
     pipeline = AgentPipeline(tool_context=ctx, llm=llm, max_iterations=10)
 
     request = QueryRequest(question="How many singers?", db_id="concert_singer")
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert response.generated_sql == "SELECT COUNT(*) FROM singers"
     assert response.retry_count == 0
 
 
 @patch("app.pipeline.agent_pipeline.create_react_agent")
-def test_retry_count_equals_tool_messages(mock_cra: MagicMock) -> None:
+async def test_retry_count_equals_tool_messages(mock_cra: MagicMock) -> None:
     from app.pipeline.agent_pipeline import AgentPipeline
 
     sql = "SELECT COUNT(*) FROM singers"
     mock_agent = MagicMock()
-    mock_agent.invoke.return_value = make_agent_result(sql, tool_rounds=3)
+    mock_agent.ainvoke = AsyncMock(return_value=make_agent_result(sql, tool_rounds=3))
     mock_cra.return_value = mock_agent
 
     ctx = make_tool_context()
@@ -85,19 +87,19 @@ def test_retry_count_equals_tool_messages(mock_cra: MagicMock) -> None:
     pipeline = AgentPipeline(tool_context=ctx, llm=llm, max_iterations=10)
 
     request = QueryRequest(question="How many singers?", db_id="concert_singer")
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert response.retry_count == 3
     assert response.generated_sql == sql
 
 
 @patch("app.pipeline.agent_pipeline.create_react_agent")
-def test_no_tool_calls(mock_cra: MagicMock) -> None:
+async def test_no_tool_calls(mock_cra: MagicMock) -> None:
     from app.pipeline.agent_pipeline import AgentPipeline
 
     sql = "SELECT name FROM artists"
     mock_agent = MagicMock()
-    mock_agent.invoke.return_value = make_agent_result(sql, tool_rounds=0)
+    mock_agent.ainvoke = AsyncMock(return_value=make_agent_result(sql, tool_rounds=0))
     mock_cra.return_value = mock_agent
 
     ctx = make_tool_context()
@@ -105,7 +107,7 @@ def test_no_tool_calls(mock_cra: MagicMock) -> None:
     pipeline = AgentPipeline(tool_context=ctx, llm=llm, max_iterations=10)
 
     request = QueryRequest(question="List artists?", db_id="concert_singer")
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert response.generated_sql == sql
     assert response.retry_count == 0
@@ -113,12 +115,12 @@ def test_no_tool_calls(mock_cra: MagicMock) -> None:
 
 
 @patch("app.pipeline.agent_pipeline.create_react_agent")
-def test_strips_markdown_fences(mock_cra: MagicMock) -> None:
+async def test_strips_markdown_fences(mock_cra: MagicMock) -> None:
     from app.pipeline.agent_pipeline import AgentPipeline
 
     raw_with_fence = "```sql\nSELECT COUNT(*) FROM singers\n```"
     mock_agent = MagicMock()
-    mock_agent.invoke.return_value = make_agent_result(raw_with_fence)
+    mock_agent.ainvoke = AsyncMock(return_value=make_agent_result(raw_with_fence))
     mock_cra.return_value = mock_agent
 
     ctx = make_tool_context()
@@ -126,17 +128,17 @@ def test_strips_markdown_fences(mock_cra: MagicMock) -> None:
     pipeline = AgentPipeline(tool_context=ctx, llm=llm, max_iterations=10)
 
     request = QueryRequest(question="How many singers?", db_id="concert_singer")
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert response.generated_sql == "SELECT COUNT(*) FROM singers"
 
 
 @patch("app.pipeline.agent_pipeline.create_react_agent")
-def test_validation_failure_sets_flag(mock_cra: MagicMock) -> None:
+async def test_validation_failure_sets_flag(mock_cra: MagicMock) -> None:
     from app.pipeline.agent_pipeline import AgentPipeline
 
     mock_agent = MagicMock()
-    mock_agent.invoke.return_value = make_agent_result("INVALID SQL")
+    mock_agent.ainvoke = AsyncMock(return_value=make_agent_result("INVALID SQL"))
     mock_cra.return_value = mock_agent
 
     ctx = make_tool_context(validation_valid=False)
@@ -144,14 +146,14 @@ def test_validation_failure_sets_flag(mock_cra: MagicMock) -> None:
     pipeline = AgentPipeline(tool_context=ctx, llm=llm, max_iterations=10)
 
     request = QueryRequest(question="Bad query", db_id="concert_singer")
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert "validation_failed" in response.flags
     assert response.generated_sql == "INVALID SQL"
 
 
 @patch("app.pipeline.agent_pipeline.create_react_agent")
-def test_build_pipeline_agent_returns_agent_pipeline(mock_cra: MagicMock) -> None:
+async def test_build_pipeline_agent_returns_agent_pipeline(mock_cra: MagicMock) -> None:
     from unittest.mock import MagicMock
 
     from app.pipeline.agent_pipeline import AgentPipeline
@@ -182,7 +184,7 @@ def test_build_pipeline_agent_returns_agent_pipeline(mock_cra: MagicMock) -> Non
 
 
 @patch("app.pipeline.agent_pipeline.create_react_agent")
-def test_no_sql_generated_returns_flag(mock_cra: MagicMock) -> None:
+async def test_no_sql_generated_returns_flag(mock_cra: MagicMock) -> None:
     from app.pipeline.agent_pipeline import AgentPipeline
 
     mock_agent = MagicMock()
@@ -197,7 +199,7 @@ def test_no_sql_generated_returns_flag(mock_cra: MagicMock) -> None:
         ),
         ToolMessage(content="schema data", tool_call_id="call_0"),
     ]
-    mock_agent.invoke.return_value = {"messages": messages}
+    mock_agent.ainvoke = AsyncMock(return_value={"messages": messages})
     mock_cra.return_value = mock_agent
 
     ctx = make_tool_context()
@@ -205,7 +207,7 @@ def test_no_sql_generated_returns_flag(mock_cra: MagicMock) -> None:
     pipeline = AgentPipeline(tool_context=ctx, llm=llm, max_iterations=10)
 
     request = QueryRequest(question="How many singers?", db_id="concert_singer")
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     assert "no_sql_generated" in response.flags
     assert response.generated_sql == ""
@@ -213,13 +215,13 @@ def test_no_sql_generated_returns_flag(mock_cra: MagicMock) -> None:
 
 
 @patch("app.pipeline.agent_pipeline.create_react_agent")
-def test_skips_intermediate_ai_messages_with_tool_calls(mock_cra: MagicMock) -> None:
+async def test_skips_intermediate_ai_messages_with_tool_calls(mock_cra: MagicMock) -> None:
     from app.pipeline.agent_pipeline import AgentPipeline
 
     sql = "SELECT * FROM albums"
     mock_agent = MagicMock()
     # 2 tool-call rounds, then a final answer
-    mock_agent.invoke.return_value = make_agent_result(sql, tool_rounds=2)
+    mock_agent.ainvoke = AsyncMock(return_value=make_agent_result(sql, tool_rounds=2))
     mock_cra.return_value = mock_agent
 
     ctx = make_tool_context()
@@ -227,7 +229,7 @@ def test_skips_intermediate_ai_messages_with_tool_calls(mock_cra: MagicMock) -> 
     pipeline = AgentPipeline(tool_context=ctx, llm=llm, max_iterations=10)
 
     request = QueryRequest(question="List albums?", db_id="concert_singer")
-    response = pipeline.run(request)
+    response = await pipeline.run(request)
 
     # Intermediate AIMessages with tool_calls should not appear as final SQL
     assert response.generated_sql == sql

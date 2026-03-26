@@ -1,6 +1,7 @@
 """Offline evaluation runner for the Text2SQL baseline pipeline."""
 
 import argparse
+import asyncio
 from dataclasses import dataclass
 
 import structlog
@@ -36,7 +37,7 @@ class EvalReport:
     avg_fewshot_table_overlap: float = 0.0
 
 
-def run_evaluation(
+async def run_evaluation(
     pipeline: Pipeline,
     spider_data_dir: str,
     db_filter: list[str] | None = None,
@@ -57,7 +58,7 @@ def run_evaluation(
 
     for ex in examples:
         req = QueryRequest(question=ex.question, db_id=ex.db_id)
-        resp = pipeline.run(req)
+        resp = await pipeline.run(req)
         success = resp.execution_metadata is not None and resp.execution_metadata.success
         latency = resp.execution_metadata.latency_ms if resp.execution_metadata else 0.0
         if success:
@@ -66,14 +67,16 @@ def run_evaluation(
 
         # Execute gold SQL to compare result sets
         db_path = f"{spider_data_dir}/database/{ex.db_id}/{ex.db_id}.sqlite"
-        gold_result = executor.execute(ex.gold_sql, db_path)
+        gold_result = await executor.execute(ex.gold_sql, db_path)
         if not gold_result.success:
             _log.warning(
                 "gold_sql execution failed",
                 db_id=ex.db_id,
                 error=gold_result.error,
             )
-        gen_result = executor.execute(resp.generated_sql, db_path) if resp.generated_sql else None
+        gen_result = (
+            await executor.execute(resp.generated_sql, db_path) if resp.generated_sql else None
+        )
 
         exec_acc = (
             result_set_match(gen_result.rows, gold_result.rows)
@@ -133,7 +136,7 @@ def run_evaluation(
     )
 
 
-if __name__ == "__main__":
+async def _main() -> None:
     parser = argparse.ArgumentParser(description="Run offline evaluation")
     parser.add_argument("--split", default="dev")
     parser.add_argument("--limit", type=int, default=50)
@@ -152,3 +155,7 @@ if __name__ == "__main__":
         "Metrics reported: execution_success, execution_accuracy, exact_match_rate, "
         "avg_schema_recall, avg_schema_precision, avg_schema_noise_ratio, avg_fewshot_table_overlap"
     )
+
+
+if __name__ == "__main__":
+    asyncio.run(_main())

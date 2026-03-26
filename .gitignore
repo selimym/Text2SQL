@@ -13,3 +13,4 @@ dist/
 .chroma/
 *.pdf
 .worktrees/
+docs/interview-prep.md

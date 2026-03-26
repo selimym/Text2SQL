@@ -41,26 +41,26 @@ def schema_retriever(mock_embeddings: MagicMock) -> SchemaRetriever:
     )
 
 
-def test_index_and_retrieve(schema_retriever: SchemaRetriever) -> None:
+async def test_index_and_retrieve(schema_retriever: SchemaRetriever) -> None:
     docs = [
         make_schema_doc("db1", "singer"),
         make_schema_doc("db1", "concert"),
         make_schema_doc("db2", "other_table"),
     ]
-    schema_retriever.index(docs)
-    results = schema_retriever.retrieve("How many singers?", db_id="db1", top_k=2)
+    await schema_retriever.index(docs)
+    results = await schema_retriever.retrieve("How many singers?", db_id="db1", top_k=2)
     assert len(results) == 2
     result_tables = {r.table_name for r in results}
     assert result_tables.issubset({"singer", "concert"})
 
 
-def test_db_id_filter(schema_retriever: SchemaRetriever) -> None:
+async def test_db_id_filter(schema_retriever: SchemaRetriever) -> None:
     docs = [
         make_schema_doc("db1", "singer"),
         make_schema_doc("db2", "other_table"),
     ]
-    schema_retriever.index(docs)
-    results = schema_retriever.retrieve("test query", db_id="db1", top_k=5)
+    await schema_retriever.index(docs)
+    results = await schema_retriever.retrieve("test query", db_id="db1", top_k=5)
     assert all(r.db_id == "db1" for r in results)
     assert len(results) == 1
 
@@ -80,7 +80,7 @@ def example_retriever(mock_embeddings: MagicMock) -> ExampleRetriever:
     )
 
 
-def test_example_index_and_retrieve(example_retriever: ExampleRetriever) -> None:
+async def test_example_index_and_retrieve(example_retriever: ExampleRetriever) -> None:
     docs = [
         make_example_doc("db1", "How many singers?", "SELECT COUNT(*) FROM singer"),
         make_example_doc("db1", "List all concerts", "SELECT * FROM concert"),
@@ -88,16 +88,16 @@ def test_example_index_and_retrieve(example_retriever: ExampleRetriever) -> None
         make_example_doc("db2", "Other db question", "SELECT * FROM other"),
         make_example_doc("db2", "Another question", "SELECT id FROM other"),
     ]
-    example_retriever.index(docs)
-    results = example_retriever.retrieve("How many rows?", db_id=None, top_k=3)
+    await example_retriever.index(docs)
+    results = await example_retriever.retrieve("How many rows?", db_id=None, top_k=3)
     assert len(results) == 3
     assert all(isinstance(r, ExampleDocument) for r in results)
 
 
-def test_example_deserialized_correctly(example_retriever: ExampleRetriever) -> None:
+async def test_example_deserialized_correctly(example_retriever: ExampleRetriever) -> None:
     docs = [make_example_doc("db1", "How many singers?", "SELECT COUNT(*) FROM singer")]
-    example_retriever.index(docs)
-    results = example_retriever.retrieve("singers count", db_id="db1", top_k=1)
+    await example_retriever.index(docs)
+    results = await example_retriever.retrieve("singers count", db_id="db1", top_k=1)
     assert len(results) == 1
     assert results[0].question == "How many singers?"
     assert results[0].sql == "SELECT COUNT(*) FROM singer"

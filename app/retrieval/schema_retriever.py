@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, cast
 
 from chromadb.api import ClientAPI
@@ -16,8 +17,7 @@ class SchemaRetriever:
         self.embeddings = embeddings
         self.collection = chroma_client.get_or_create_collection(collection_name)
 
-    def index(self, docs: list[SchemaDocument]) -> None:
-        """Index schema documents into ChromaDB."""
+    def _index_sync(self, docs: list[SchemaDocument]) -> None:
         if not docs:
             return
         texts = [doc.to_text() for doc in docs]
@@ -32,8 +32,11 @@ class SchemaRetriever:
             metadatas=cast(Any, metadatas),
         )
 
-    def retrieve(self, question: str, db_id: str, top_k: int) -> list[SchemaDocument]:
-        """Retrieve top-k schema documents relevant to the question, filtered by db_id."""
+    async def index(self, docs: list[SchemaDocument]) -> None:
+        """Index schema documents into ChromaDB."""
+        await asyncio.to_thread(self._index_sync, docs)
+
+    def _retrieve_sync(self, question: str, db_id: str, top_k: int) -> list[SchemaDocument]:
         query_embedding = self.embeddings.embed_query(question)
         results = self.collection.query(
             query_embeddings=cast(Any, [query_embedding]),
@@ -55,3 +58,7 @@ class SchemaRetriever:
                 )
             )
         return docs
+
+    async def retrieve(self, question: str, db_id: str, top_k: int) -> list[SchemaDocument]:
+        """Retrieve top-k schema documents relevant to the question, filtered by db_id."""
+        return await asyncio.to_thread(self._retrieve_sync, question, db_id, top_k)

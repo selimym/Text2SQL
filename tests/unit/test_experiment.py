@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Mapping
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.eval.experiment import compare_variants
 from app.eval.runner import EvalReport
@@ -29,7 +29,7 @@ def make_eval_report(
 def _mock_pipeline() -> Pipeline:
     """Return a MagicMock that satisfies the Pipeline protocol."""
     p = MagicMock(spec=["run"])
-    p.run = MagicMock()
+    p.run = AsyncMock()
     return p
 
 
@@ -38,7 +38,7 @@ def _mock_pipeline() -> Pipeline:
 # ---------------------------------------------------------------------------
 
 
-def test_compare_variants_winner_is_better_variant() -> None:
+async def test_compare_variants_winner_is_better_variant() -> None:
     report_a = make_eval_report(execution_accuracy=0.6)
     report_b = make_eval_report(execution_accuracy=0.8)
 
@@ -49,8 +49,8 @@ def test_compare_variants_winner_is_better_variant() -> None:
 
     side_effects = [report_a, report_b]
 
-    with patch("app.eval.experiment.run_evaluation", side_effect=side_effects):
-        result = compare_variants(
+    with patch("app.eval.experiment.run_evaluation", new=AsyncMock(side_effect=side_effects)):
+        result = await compare_variants(
             pipelines=pipelines,
             spider_data_dir="/fake/dir",
         )
@@ -63,7 +63,7 @@ def test_compare_variants_winner_is_better_variant() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compare_variants_delta_execution_accuracy() -> None:
+async def test_compare_variants_delta_execution_accuracy() -> None:
     report_a = make_eval_report(execution_accuracy=0.6)
     report_b = make_eval_report(execution_accuracy=0.8)
 
@@ -72,8 +72,10 @@ def test_compare_variants_delta_execution_accuracy() -> None:
         "variant_b": _mock_pipeline(),
     }
 
-    with patch("app.eval.experiment.run_evaluation", side_effect=[report_a, report_b]):
-        result = compare_variants(
+    with patch(
+        "app.eval.experiment.run_evaluation", new=AsyncMock(side_effect=[report_a, report_b])
+    ):
+        result = await compare_variants(
             pipelines=pipelines,
             spider_data_dir="/fake/dir",
         )
@@ -86,7 +88,7 @@ def test_compare_variants_delta_execution_accuracy() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_comparison_report_json_serialization() -> None:
+async def test_comparison_report_json_serialization() -> None:
     report_a = make_eval_report(execution_accuracy=0.6)
     report_b = make_eval_report(execution_accuracy=0.8)
 
@@ -95,8 +97,10 @@ def test_comparison_report_json_serialization() -> None:
         "variant_b": _mock_pipeline(),
     }
 
-    with patch("app.eval.experiment.run_evaluation", side_effect=[report_a, report_b]):
-        result = compare_variants(
+    with patch(
+        "app.eval.experiment.run_evaluation", new=AsyncMock(side_effect=[report_a, report_b])
+    ):
+        result = await compare_variants(
             pipelines=pipelines,
             spider_data_dir="/fake/dir",
         )
@@ -113,7 +117,7 @@ def test_comparison_report_json_serialization() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compare_variants_calls_run_evaluation_for_each_pipeline() -> None:
+async def test_compare_variants_calls_run_evaluation_for_each_pipeline() -> None:
     report_a = make_eval_report(execution_accuracy=0.5)
     report_b = make_eval_report(execution_accuracy=0.7)
     report_c = make_eval_report(execution_accuracy=0.9)
@@ -125,9 +129,10 @@ def test_compare_variants_calls_run_evaluation_for_each_pipeline() -> None:
     }
 
     with patch(
-        "app.eval.experiment.run_evaluation", side_effect=[report_a, report_b, report_c]
+        "app.eval.experiment.run_evaluation",
+        new=AsyncMock(side_effect=[report_a, report_b, report_c]),
     ) as mock_run:
-        compare_variants(
+        await compare_variants(
             pipelines=pipelines,
             spider_data_dir="/fake/dir",
         )
@@ -140,13 +145,13 @@ def test_compare_variants_calls_run_evaluation_for_each_pipeline() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compare_variants_single_variant() -> None:
+async def test_compare_variants_single_variant() -> None:
     report = make_eval_report(execution_accuracy=0.75)
 
     pipelines: Mapping[str, Pipeline] = {"only_one": _mock_pipeline()}
 
-    with patch("app.eval.experiment.run_evaluation", return_value=report):
-        result = compare_variants(
+    with patch("app.eval.experiment.run_evaluation", new=AsyncMock(return_value=report)):
+        result = await compare_variants(
             pipelines=pipelines,
             spider_data_dir="/fake/dir",
         )
@@ -159,7 +164,7 @@ def test_compare_variants_single_variant() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compare_variants_tie_winner_is_insertion_order() -> None:
+async def test_compare_variants_tie_winner_is_insertion_order() -> None:
     """When two variants tie, winner is the first one in iteration order."""
     report_a = make_eval_report(execution_accuracy=0.75)
     report_b = make_eval_report(execution_accuracy=0.75)
@@ -169,8 +174,10 @@ def test_compare_variants_tie_winner_is_insertion_order() -> None:
         "second": _mock_pipeline(),
     }
 
-    with patch("app.eval.experiment.run_evaluation", side_effect=[report_a, report_b]):
-        result = compare_variants(
+    with patch(
+        "app.eval.experiment.run_evaluation", new=AsyncMock(side_effect=[report_a, report_b])
+    ):
+        result = await compare_variants(
             pipelines=pipelines,
             spider_data_dir="/fake/dir",
         )

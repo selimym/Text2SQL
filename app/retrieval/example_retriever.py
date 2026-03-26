@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, cast
 
 from chromadb.api import ClientAPI
@@ -16,8 +17,7 @@ class ExampleRetriever:
         self.embeddings = embeddings
         self.collection = chroma_client.get_or_create_collection(collection_name)
 
-    def index(self, docs: list[ExampleDocument]) -> None:
-        """Index example documents into ChromaDB."""
+    def _index_sync(self, docs: list[ExampleDocument]) -> None:
         if not docs:
             return
         texts = [doc.to_text() for doc in docs]
@@ -32,8 +32,11 @@ class ExampleRetriever:
             metadatas=cast(Any, metadatas),
         )
 
-    def retrieve(self, question: str, db_id: str | None, top_k: int) -> list[ExampleDocument]:
-        """Retrieve top-k example documents relevant to the question."""
+    async def index(self, docs: list[ExampleDocument]) -> None:
+        """Index example documents into ChromaDB."""
+        await asyncio.to_thread(self._index_sync, docs)
+
+    def _retrieve_sync(self, question: str, db_id: str | None, top_k: int) -> list[ExampleDocument]:
         query_embedding = self.embeddings.embed_query(question)
         where = {"db_id": db_id} if db_id is not None else None
         results = self.collection.query(
@@ -53,3 +56,7 @@ class ExampleRetriever:
                 )
             )
         return docs
+
+    async def retrieve(self, question: str, db_id: str | None, top_k: int) -> list[ExampleDocument]:
+        """Retrieve top-k example documents relevant to the question."""
+        return await asyncio.to_thread(self._retrieve_sync, question, db_id, top_k)

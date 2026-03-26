@@ -32,4 +32,4 @@ async def query(request: QueryRequest) -> QueryResponse:
     if not result.passed:
         raise HTTPException(status_code=422, detail=result.reason)
     pipeline = get_pipeline()
-    return pipeline.run(request)
+    return await pipeline.run(request)

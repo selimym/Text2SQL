@@ -1,17 +1,17 @@
 """Pipeline node functions for the LangGraph-based Text2SQL pipeline.
 
-Each node has the signature ``(state: PipelineState, services: NodeServices) -> PipelineState``.
+Each node has the signature ``async (state: PipelineState, services: NodeServices) -> PipelineState``.
 LangGraph only calls nodes with ``(state)`` or ``(state, config: RunnableConfig)``, so these
-2-argument nodes MUST be registered via ``bind_nodes`` which wraps each one in a
-``functools.partial`` that pre-fills the ``services`` argument.  Never add a node directly to
-the graph without going through ``bind_nodes``.
+2-argument nodes MUST be registered via ``bind_nodes`` which wraps each one in an async function
+that pre-fills the ``services`` argument.  Never add a node directly to the graph without going
+through ``bind_nodes``.
 """
 
-import functools
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from typing import Any
 
 import sqlglot
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -58,10 +58,12 @@ def _new_state(base: PipelineState, **updates: object) -> PipelineState:
     return result  # type: ignore[return-value]
 
 
-def retrieve_schema_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def retrieve_schema_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     req = state["request"]
-    schema_docs = services.schema_retriever.retrieve(req.question, req.db_id, req.top_k_schema)
+    schema_docs = await services.schema_retriever.retrieve(
+        req.question, req.db_id, req.top_k_schema
+    )
     elapsed_ms = (time.monotonic() - start) * 1000
     return _new_state(
         state,
@@ -70,11 +72,13 @@ def retrieve_schema_node(state: PipelineState, services: NodeServices) -> Pipeli
     )
 
 
-def retrieve_examples_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def retrieve_examples_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     req = state["request"]
     schema_docs = list(state.get("schema_docs") or [])
-    example_docs = services.example_retriever.retrieve(req.question, req.db_id, req.top_k_examples)
+    example_docs = await services.example_retriever.retrieve(
+        req.question, req.db_id, req.top_k_examples
+    )
     elapsed_ms = (time.monotonic() - start) * 1000
 
     settings = get_settings()
@@ -113,7 +117,7 @@ def retrieve_examples_node(state: PipelineState, services: NodeServices) -> Pipe
     )
 
 
-def assemble_prompt_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def assemble_prompt_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     req = state["request"]
     schema_docs = state.get("schema_docs") or []
@@ -138,7 +142,7 @@ def assemble_prompt_node(state: PipelineState, services: NodeServices) -> Pipeli
     )
 
 
-def assemble_draft_prompt_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def assemble_draft_prompt_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     req = state["request"]
     schema_docs = state.get("schema_docs") or []
@@ -152,10 +156,10 @@ def assemble_draft_prompt_node(state: PipelineState, services: NodeServices) -> 
     )
 
 
-def generate_draft_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def generate_draft_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     assembled_prompt = state.get("assembled_prompt") or ""
-    draft_sql = services.generator.generate(assembled_prompt)
+    draft_sql = await services.generator.agenerate(assembled_prompt)
     elapsed_ms = (time.monotonic() - start) * 1000
     return _new_state(
         state,
@@ -164,7 +168,7 @@ def generate_draft_sql_node(state: PipelineState, services: NodeServices) -> Pip
     )
 
 
-def refine_schema_context_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def refine_schema_context_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     draft_sql = state.get("draft_sql") or ""
     schema_docs = list(state.get("schema_docs") or [])
@@ -192,7 +196,9 @@ def refine_schema_context_node(state: PipelineState, services: NodeServices) -> 
             covered = {doc.table_name.lower() for doc in filtered_docs}
             for table_name in mentioned_tables:
                 if table_name not in covered:
-                    fetched = services.schema_retriever.retrieve(req.question, req.db_id, top_k=1)
+                    fetched = await services.schema_retriever.retrieve(
+                        req.question, req.db_id, top_k=1
+                    )
                     if fetched:
                         filtered_docs.append(fetched[0])
                         covered.add(table_name)
@@ -209,10 +215,10 @@ def refine_schema_context_node(state: PipelineState, services: NodeServices) -> 
     )
 
 
-def generate_final_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def generate_final_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     assembled_prompt = state.get("assembled_prompt") or ""
-    generated_sql = services.generator.generate(assembled_prompt)
+    generated_sql = await services.generator.agenerate(assembled_prompt)
     elapsed_ms = (time.monotonic() - start) * 1000
     return _new_state(
         state,
@@ -225,7 +231,7 @@ def generate_final_sql_node(state: PipelineState, services: NodeServices) -> Pip
 generate_sql_node = generate_final_sql_node
 
 
-def validate_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def validate_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     generated_sql = state.get("generated_sql") or ""
     validation_result = services.validator.validate(generated_sql)
@@ -247,12 +253,12 @@ def validate_sql_node(state: PipelineState, services: NodeServices) -> PipelineS
     )
 
 
-def execute_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def execute_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     db_id = state["request"].db_id
     db_path = os.path.join(services.spider_data_dir, "database", db_id, f"{db_id}.sqlite")
     generated_sql = state.get("generated_sql") or ""
-    execution_result = services.executor.execute(generated_sql, db_path)
+    execution_result = await services.executor.execute(generated_sql, db_path)
     elapsed_ms = (time.monotonic() - start) * 1000
     return _new_state(
         state,
@@ -261,7 +267,7 @@ def execute_sql_node(state: PipelineState, services: NodeServices) -> PipelineSt
     )
 
 
-def critique_failure_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def critique_failure_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     execution_result = state.get("execution_result")
     validation_result = state.get("validation_result")
@@ -281,7 +287,7 @@ def critique_failure_node(state: PipelineState, services: NodeServices) -> Pipel
 
     fault_category = "generation_fault"
     try:
-        response = services.llm.invoke([HumanMessage(content=classification_prompt)])
+        response = await services.llm.ainvoke([HumanMessage(content=classification_prompt)])
         content = response.content
         raw = content.strip().lower() if isinstance(content, str) else ""
         fault_category = "retrieval_fault" if "retrieval_fault" in raw else "generation_fault"
@@ -305,11 +311,11 @@ def critique_failure_node(state: PipelineState, services: NodeServices) -> Pipel
     )
 
 
-def broaden_schema_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def broaden_schema_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     req = state["request"]
     broader_top_k = req.top_k_schema + 3
-    schema_docs = services.schema_retriever.retrieve(req.question, req.db_id, broader_top_k)
+    schema_docs = await services.schema_retriever.retrieve(req.question, req.db_id, broader_top_k)
     elapsed_ms = (time.monotonic() - start) * 1000
     return _new_state(
         state,
@@ -318,7 +324,7 @@ def broaden_schema_node(state: PipelineState, services: NodeServices) -> Pipelin
     )
 
 
-def build_response_node(state: PipelineState, services: NodeServices) -> PipelineState:
+async def build_response_node(state: PipelineState, services: NodeServices) -> PipelineState:
     exec_result = state.get("execution_result")
     flags = list(state.get("flags", []) or [])
 
@@ -340,15 +346,28 @@ def build_response_node(state: PipelineState, services: NodeServices) -> Pipelin
     return _new_state(state, flags=flags)
 
 
-def bind_nodes(services: NodeServices) -> dict[str, Callable[[PipelineState], PipelineState]]:
-    """Return a mapping of node name to a bound callable suitable for LangGraph registration.
+def _make_bound_node(
+    fn: Callable[..., Coroutine[Any, Any, PipelineState]],
+    svc: NodeServices,
+) -> Callable[[PipelineState], Coroutine[Any, Any, PipelineState]]:
+    async def _bound(state: PipelineState) -> PipelineState:
+        return await fn(state, svc)
+
+    return _bound
+
+
+def bind_nodes(
+    services: NodeServices,
+) -> dict[str, Callable[[PipelineState], Coroutine[Any, Any, PipelineState]]]:
+    """Return a mapping of node name to a bound async callable suitable for LangGraph registration.
 
     LangGraph invokes nodes with ``(state)`` or ``(state, config)``.  Because every node in this
-    module requires ``services``, each one must be wrapped with ``functools.partial`` before being
-    added to the graph.  Using this helper is the only sanctioned way to register nodes; it makes
-    it impossible to accidentally add an unbound 2-argument node directly to the graph.
+    module requires ``services``, each one must be wrapped before being added to the graph.
+    Using this helper is the only sanctioned way to register nodes.
     """
-    node_fns: list[tuple[str, Callable[[PipelineState, NodeServices], PipelineState]]] = [
+    node_fns: list[
+        tuple[str, Callable[[PipelineState, NodeServices], Coroutine[Any, Any, PipelineState]]]
+    ] = [
         ("retrieve_schema", retrieve_schema_node),
         ("retrieve_examples", retrieve_examples_node),
         ("assemble_prompt", assemble_prompt_node),
@@ -362,7 +381,4 @@ def bind_nodes(services: NodeServices) -> dict[str, Callable[[PipelineState], Pi
         ("broaden_schema", broaden_schema_node),
         ("build_response", build_response_node),
     ]
-    return {
-        name: functools.partial(lambda state, fn=fn, svc=services: fn(state, svc))
-        for name, fn in node_fns
-    }
+    return {name: _make_bound_node(fn, services) for name, fn in node_fns}

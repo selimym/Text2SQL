@@ -1,6 +1,5 @@
+import asyncio
 import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 import sqlalchemy
 from pydantic import BaseModel
@@ -21,34 +20,35 @@ class SQLExecutor:
         self.max_rows = max_rows
         self.timeout_seconds = timeout_seconds
 
-    def execute(self, sql: str, db_path: str) -> ExecutionResult:
+    def _execute_sync(self, sql: str, db_path: str) -> ExecutionResult:
         start = time.monotonic()
-
-        def _run() -> ExecutionResult:
-            engine = sqlalchemy.create_engine(f"sqlite:///{db_path}")
-            try:
-                with engine.connect() as conn:
-                    result = conn.execute(sqlalchemy.text(sql))
-                    cols = list(result.keys())
-                    rows = [list(r) for r in result.fetchmany(self.max_rows + 1)]
-                    truncated = len(rows) > self.max_rows
-                    rows = rows[: self.max_rows]
-                    return ExecutionResult(
-                        success=True,
-                        rows=rows,
-                        column_names=cols,
-                        row_count=len(rows),
-                        latency_ms=(time.monotonic() - start) * 1000,
-                        error="Result truncated" if truncated else None,
-                    )
-            finally:
-                engine.dispose()
-
+        engine = sqlalchemy.create_engine(f"sqlite:///{db_path}")
         try:
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(_run)
-                return future.result(timeout=self.timeout_seconds)
-        except FuturesTimeoutError:
+            with engine.connect() as conn:
+                result = conn.execute(sqlalchemy.text(sql))
+                cols = list(result.keys())
+                rows = [list(r) for r in result.fetchmany(self.max_rows + 1)]
+                truncated = len(rows) > self.max_rows
+                rows = rows[: self.max_rows]
+                return ExecutionResult(
+                    success=True,
+                    rows=rows,
+                    column_names=cols,
+                    row_count=len(rows),
+                    latency_ms=(time.monotonic() - start) * 1000,
+                    error="Result truncated" if truncated else None,
+                )
+        finally:
+            engine.dispose()
+
+    async def execute(self, sql: str, db_path: str) -> ExecutionResult:
+        start = time.monotonic()
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._execute_sync, sql, db_path),
+                timeout=self.timeout_seconds,
+            )
+        except TimeoutError:
             return ExecutionResult(
                 success=False,
                 error="Query timed out",
