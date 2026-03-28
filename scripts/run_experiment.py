@@ -2,8 +2,12 @@
 """Experiment runner: compare pipeline variants on Spider subset."""
 
 import argparse
+import asyncio
+import csv
 import os
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal, cast
 
 import chromadb
@@ -14,7 +18,7 @@ from app.core.llm import get_llm
 from app.core.logging import configure_logging
 from app.db.executor import SQLExecutor
 from app.db.validator import SQLValidator
-from app.eval.experiment import ComparisonReport, compare_variants
+from app.eval.experiment import ComparisonReport, compare_variants, compare_variants_async
 from app.llm.generator import SQLGenerator
 from app.pipeline.assembler import PromptAssembler
 from app.pipeline.factory import build_pipeline
@@ -42,13 +46,49 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
-        default="experiment_report.json",
-        help="Output file for ComparisonReport JSON",
+        default=None,
+        help="Output file for ComparisonReport JSON (default: experiment_report_<timestamp>.json)",
     )
     parser.add_argument(
         "--langsmith-project",
         default=None,
         help="LangSmith project name (overrides LANGSMITH_PROJECT env var)",
+    )
+    parser.add_argument(
+        "--similarity-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Cosine distance cutoff for schema retrieval (0.0=identical, 2.0=opposite). "
+            "Tables above this threshold are dropped. Overrides SCHEMA_SIMILARITY_THRESHOLD in .env. "
+            "Typical range: 0.3–0.8. Omit to use top-k only."
+        ),
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=8,
+        help="Max parallel pipeline calls per variant (default: 8). Uses asyncio.to_thread.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50,
+        help=(
+            "Number of examples per checkpoint batch (default: 50). "
+            "Each batch runs concurrently then is written to the checkpoint file atomically. "
+            "Smaller = more frequent saves; larger = fewer writes."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-dir",
+        default="checkpoints",
+        help=(
+            "Directory for per-example checkpoint files (JSONL). "
+            "Re-running with the same args resumes from where it left off. "
+            "Use a different dir or delete the files to force a full re-run. "
+            "(default: checkpoints/)"
+        ),
     )
     return parser.parse_args()
 
@@ -65,6 +105,39 @@ def setup_langsmith(project: str | None) -> None:
         )
     else:
         _log.info("langsmith_tracing_disabled", reason="LANGCHAIN_API_KEY not set")
+
+
+CSV_FIELDS = [
+    "run_date", "variant", "limit", "db_filter", "similarity_threshold",
+    "execution_accuracy", "exact_match_rate", "success_rate",
+    "avg_schema_recall", "avg_schema_precision", "avg_schema_noise_ratio",
+    "wall_clock_seconds", "report_file",
+]
+
+
+def append_csv(report: ComparisonReport, report_file: str, csv_path: str = "results.csv") -> None:
+    exists = Path(csv_path).exists()
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        if not exists:
+            writer.writeheader()
+        for vr in report.variants:
+            r = vr.report
+            writer.writerow({
+                "run_date": report.run_date,
+                "variant": vr.variant,
+                "limit": report.limit,
+                "db_filter": "|".join(report.db_filter) if report.db_filter else "",
+                "similarity_threshold": report.similarity_threshold if report.similarity_threshold is not None else "",
+                "execution_accuracy": r.execution_accuracy,
+                "exact_match_rate": r.exact_match_rate,
+                "success_rate": r.success_rate,
+                "avg_schema_recall": r.avg_schema_recall,
+                "avg_schema_precision": r.avg_schema_precision,
+                "avg_schema_noise_ratio": r.avg_schema_noise_ratio,
+                "wall_clock_seconds": round(vr.wall_clock_seconds, 1),
+                "report_file": report_file,
+            })
 
 
 def print_summary_table(report: ComparisonReport) -> None:
@@ -96,8 +169,23 @@ def print_summary_table(report: ComparisonReport) -> None:
 
 def main() -> int:
     args = parse_args()
+    return asyncio.run(_async_main(args))
+
+
+async def _async_main(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging(settings.log_level)
+
+    output_path = args.output or (
+        f"experiment_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+    )
+
+    # Similarity threshold: CLI arg takes precedence over .env setting
+    similarity_threshold = (
+        args.similarity_threshold
+        if args.similarity_threshold is not None
+        else settings.schema_similarity_threshold
+    )
 
     # Wire LangSmith
     langsmith_project = args.langsmith_project or settings.langsmith_project
@@ -142,6 +230,7 @@ def main() -> int:
                 executor=executor,
                 spider_data_dir=settings.spider_data_dir,
                 variant=variant_literal,
+                schema_similarity_threshold=similarity_threshold,
             )
         except NotImplementedError as e:
             _log.error("pipeline_variant_not_implemented", variant=variant, error=str(e))
@@ -149,20 +238,30 @@ def main() -> int:
             return 1
 
     _log.info(
-        "starting_experiment", variants=args.variants, limit=args.limit, db_filter=args.db_filter
+        "starting_experiment", variants=args.variants, limit=args.limit, db_filter=args.db_filter,
+        concurrency=args.concurrency, batch_size=args.batch_size, checkpoint_dir=args.checkpoint_dir,
     )
 
-    report = compare_variants(
+    checkpoint_dir = Path(args.checkpoint_dir)
+    report = await compare_variants_async(
         pipelines=pipelines,
         spider_data_dir=settings.spider_data_dir,
         db_filter=args.db_filter,
         limit=args.limit,
+        similarity_threshold=similarity_threshold,
+        concurrency=args.concurrency,
+        batch_size=args.batch_size,
+        checkpoint_dir=checkpoint_dir,
     )
 
     # Write JSON report
-    with open(args.output, "w") as f:
+    with open(output_path, "w") as f:
         f.write(report.to_json())
-    _log.info("report_saved", path=args.output)
+    _log.info("report_saved", path=output_path)
+
+    # Append to results CSV
+    append_csv(report, report_file=output_path)
+    _log.info("csv_updated", path="results.csv")
 
     # Print summary table
     print_summary_table(report)
