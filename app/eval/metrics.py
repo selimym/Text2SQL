@@ -78,25 +78,3 @@ def schema_noise_ratio(gold_sql: str, retrieved_tables: list[str]) -> float:
     return 1.0 - schema_precision(gold_sql, retrieved_tables)
 
 
-def fewshot_table_overlap(gold_sql: str, retrieved_sqls: list[str]) -> float:
-    """Average per-example fraction of tables in each retrieved_sql that overlap with gold SQL tables.
-    Uses same sqlglot table extraction as schema_recall.
-    Returns 0.0 if retrieved_sqls is empty."""
-    if not retrieved_sqls:
-        return 0.0
-
-    gold_tables = _extract_tables(gold_sql)
-
-    overlaps: list[float] = []
-    for retrieved_sql in retrieved_sqls:
-        retrieved_tables = _extract_tables(retrieved_sql)
-
-        if not retrieved_tables:
-            overlap = 0.0
-        elif not gold_tables:
-            overlap = 1.0
-        else:
-            overlap = len(gold_tables & retrieved_tables) / len(retrieved_tables)
-        overlaps.append(overlap)
-
-    return sum(overlaps) / len(overlaps) if overlaps else 0.0
