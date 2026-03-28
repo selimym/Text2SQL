@@ -1,7 +1,9 @@
 from app.db.schema_doc import SchemaDocument
 from app.retrieval.example_doc import ExampleDocument
 
-SYSTEM_PROMPT = """You are an expert SQL generator. Given a natural language question, relevant database schema context, and similar examples, generate a single correct SQL SELECT query. Return ONLY the SQL query with no explanation or markdown."""
+SYSTEM_PROMPT = """You are an expert SQL generator. Given a natural language question, relevant database schema context, and similar examples, generate a single correct SQL SELECT query.
+Return ONLY the SQL query with no explanation, reasoning, or markdown.
+If the question cannot be answered with the given schema, return: SELECT NULL"""
 
 
 def build_user_prompt(
