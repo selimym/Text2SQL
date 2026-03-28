@@ -1,6 +1,7 @@
 """CLI script to index Spider training data into ChromaDB."""
 
 import argparse
+import asyncio
 import json
 from pathlib import Path
 
@@ -29,7 +30,7 @@ def extract_tables_from_sql(sql: str) -> list[str]:
         return []
 
 
-def main() -> None:
+async def main() -> None:
     parser = argparse.ArgumentParser(description="Index Spider data into ChromaDB")
     parser.add_argument(
         "--spider-dir",
@@ -59,7 +60,7 @@ def main() -> None:
         collection_name="spider_schemas",
         chroma_client=chroma_client,
     )
-    schema_retriever.index(schema_docs)
+    await schema_retriever.index(schema_docs)
     print(f"Indexed {len(schema_docs)} schema documents into ChromaDB")
 
     # Index example documents
@@ -88,10 +89,10 @@ def main() -> None:
         collection_name="spider_examples",
         chroma_client=chroma_client,
     )
-    example_retriever.index(example_docs)
+    await example_retriever.index(example_docs)
     print(f"Indexed {len(example_docs)} training examples into ChromaDB")
     print("\nIndexing complete!")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

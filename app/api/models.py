@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -27,10 +28,9 @@ class QueryResponse(BaseModel):
     confidence: float | None = None
     flags: list[str] = Field(default_factory=list)
     trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    step_timings: dict[str, float] | None = None
+    step_timings: dict[str, Any] | None = None
     retry_count: int | None = None
     draft_sql: str | None = None
-    retrieved_example_sqls: list[str] | None = None
 
 
 class ErrorResponse(BaseModel):

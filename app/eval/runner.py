@@ -5,6 +5,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -32,12 +33,12 @@ class EvalReport:
     execution_accuracy: float
     exact_match_rate: float
     avg_schema_recall: float
-    results: list[dict]  # type: ignore[type-arg]
+    results: list[dict[str, Any]]
     avg_schema_precision: float = 0.0
     avg_schema_noise_ratio: float = 0.0
 
 
-def run_evaluation(
+async def run_evaluation(
     pipeline: Pipeline,
     spider_data_dir: str,
     db_filter: list[str] | None = None,
@@ -50,15 +51,17 @@ def run_evaluation(
 
     for ex in examples:
         req = QueryRequest(question=ex.question, db_id=ex.db_id)
-        resp = pipeline.run(req)
+        resp = await pipeline.run(req)
         success = resp.execution_metadata is not None and resp.execution_metadata.success
         latency = resp.execution_metadata.latency_ms if resp.execution_metadata else 0.0
 
         db_path = f"{spider_data_dir}/database/{ex.db_id}/{ex.db_id}.sqlite"
-        gold_result = executor.execute(ex.gold_sql, db_path)
+        gold_result = await executor.execute(ex.gold_sql, db_path)
         if not gold_result.success:
             _log.warning("gold_sql execution failed", db_id=ex.db_id, error=gold_result.error)
-        gen_result = executor.execute(resp.generated_sql, db_path) if resp.generated_sql else None
+        gen_result = (
+            await executor.execute(resp.generated_sql, db_path) if resp.generated_sql else None
+        )
 
         results.append(
             _compute_result_metrics(
@@ -88,24 +91,24 @@ def _compute_result_metrics(
     generated_sql: str,
     success: bool,
     latency: float,
-    gen_rows: list | None,
-    gold_rows: list | None,
+    gen_rows: list[list[Any]] | None,
+    gold_rows: list[list[Any]] | None,
     gold_ok: bool,
     retrieved_schema: list[str],
     retry_count: int | None = None,
     flags: list[str] | None = None,
-    step_timings: dict | None = None,
-) -> dict:  # type: ignore[type-arg]
+    step_timings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     exec_acc = (
         result_set_match(gen_rows, gold_rows)
-        if gen_rows is not None and gold_ok
+        if gen_rows is not None and gold_rows is not None and gold_ok
         else False
     )
     em = normalized_exact_match(generated_sql, ex_gold_sql) if generated_sql else False
     recall = schema_recall(ex_gold_sql, retrieved_schema)
     precision = schema_precision(ex_gold_sql, retrieved_schema)
     noise = schema_noise_ratio(ex_gold_sql, retrieved_schema)
-    row: dict = {  # type: ignore[type-arg]
+    row: dict[str, Any] = {
         "question": ex_question,
         "db_id": ex_db_id,
         "gold_sql": ex_gold_sql,
@@ -127,13 +130,20 @@ def _compute_result_metrics(
     return row
 
 
-def _aggregate(results: list[dict]) -> EvalReport:  # type: ignore[type-arg]
+def _aggregate(results: list[dict[str, Any]]) -> EvalReport:
     n = len(results)
     if n == 0:
         return EvalReport(
-            total=0, execution_success=0, success_rate=0.0, avg_latency_ms=0.0,
-            execution_accuracy=0.0, exact_match_rate=0.0, avg_schema_recall=0.0,
-            results=[], avg_schema_precision=0.0, avg_schema_noise_ratio=0.0,
+            total=0,
+            execution_success=0,
+            success_rate=0.0,
+            avg_latency_ms=0.0,
+            execution_accuracy=0.0,
+            exact_match_rate=0.0,
+            avg_schema_recall=0.0,
+            results=[],
+            avg_schema_precision=0.0,
+            avg_schema_noise_ratio=0.0,
         )
     successes = sum(1 for r in results if r["success"])
     exec_acc_total = sum(1 for r in results if r["execution_accuracy"])
@@ -167,7 +177,7 @@ async def run_evaluation_async(
 ) -> EvalReport:
     """Run evaluation concurrently with checkpoint/resume support.
 
-    Uses asyncio.to_thread to run sync pipeline.run() calls in parallel.
+    Uses asyncio.Semaphore to limit concurrent pipeline.run() calls.
     Examples are processed in batches of `batch_size`; each batch is written
     to the checkpoint file atomically after all its examples complete.
     On resume, skips examples already present in the checkpoint file.
@@ -176,7 +186,7 @@ async def run_evaluation_async(
     executor = SQLExecutor()
 
     # Load checkpoint if it exists
-    done_results: list[dict] = []  # type: ignore[type-arg]
+    done_results: list[dict[str, Any]] = []
     done_keys: set[tuple[str, str]] = set()
     if checkpoint_path and checkpoint_path.exists():
         for line in checkpoint_path.read_text().splitlines():
@@ -203,25 +213,23 @@ async def run_evaluation_async(
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
     sem = asyncio.Semaphore(concurrency)
-    new_results: list[dict] = []  # type: ignore[type-arg]
+    new_results: list[dict[str, Any]] = []
 
-    async def process_one(ex) -> dict:  # type: ignore[type-arg]
+    async def process_one(ex: Any) -> dict[str, Any]:
         async with sem:
             req = QueryRequest(question=ex.question, db_id=ex.db_id)
-            resp = await asyncio.to_thread(pipeline.run, req)
+            resp = await pipeline.run(req)
 
             success = resp.execution_metadata is not None and resp.execution_metadata.success
             latency = resp.execution_metadata.latency_ms if resp.execution_metadata else 0.0
 
             db_path = f"{spider_data_dir}/database/{ex.db_id}/{ex.db_id}.sqlite"
-            gold_result = await asyncio.to_thread(executor.execute, ex.gold_sql, db_path)
+            gold_result = await executor.execute(ex.gold_sql, db_path)
             if not gold_result.success:
                 _log.warning("gold_sql_failed", db_id=ex.db_id, error=gold_result.error)
 
             gen_result = (
-                await asyncio.to_thread(executor.execute, resp.generated_sql, db_path)
-                if resp.generated_sql
-                else None
+                await executor.execute(resp.generated_sql, db_path) if resp.generated_sql else None
             )
 
             return _compute_result_metrics(
@@ -274,10 +282,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("Note: Full pipeline wiring requires ANTHROPIC_API_KEY or OPENAI_API_KEY in .env")
-    # Wiring the pipeline requires live API keys; for now the CLI prints a summary.
-    # To run: build the pipeline in main.py and call run_evaluation() directly.
     print(f"Evaluation complete. Report saved to {args.output}")
     print(
         "Metrics reported: execution_success, execution_accuracy, exact_match_rate, "
-        "avg_schema_recall, avg_schema_precision, avg_schema_noise_ratio, avg_fewshot_table_overlap"
+        "avg_schema_recall, avg_schema_precision, avg_schema_noise_ratio"
     )

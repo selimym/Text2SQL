@@ -1,3 +1,4 @@
+import asyncio
 import re
 from typing import Any, cast
 
@@ -14,7 +15,7 @@ def _parse_schema_text(text: str, db_id: str, table_name: str) -> SchemaDocument
     for line in text.splitlines():
         line = line.strip()
         if line.startswith("Columns:"):
-            col_str = line[len("Columns:"):].strip()
+            col_str = line[len("Columns:") :].strip()
             for part in col_str.split(","):
                 part = part.strip()
                 m = re.match(r"(\w+)\s+\(([^)]+)\)(\s+\[PK\])?", part)
@@ -54,23 +55,24 @@ class SchemaRetriever:
         self.embeddings = embeddings
         self.collection = chroma_client.get_or_create_collection(collection_name)
 
-    def index(self, docs: list[SchemaDocument]) -> None:
+    async def index(self, docs: list[SchemaDocument]) -> None:
         """Index schema documents into ChromaDB."""
         if not docs:
             return
         texts = [doc.to_text() for doc in docs]
         metadatas = [doc.to_chroma_metadata() for doc in docs]
         ids = [f"{doc.db_id}_{doc.table_name}" for doc in docs]
-        raw_embeddings = self.embeddings.embed_documents(texts)
+        raw_embeddings = await asyncio.to_thread(self.embeddings.embed_documents, texts)
         embeddings = raw_embeddings[: len(ids)]
-        self.collection.upsert(
+        await asyncio.to_thread(
+            self.collection.upsert,
             ids=ids,
             embeddings=cast(Any, embeddings),
             documents=texts,
             metadatas=cast(Any, metadatas),
         )
 
-    def retrieve(
+    async def retrieve(
         self,
         question: str,
         db_id: str,
@@ -85,8 +87,9 @@ class SchemaRetriever:
                 Typical useful range: 0.3–0.8. Calibrate on your dev set.
                 When None, all top_k results are returned regardless of distance.
         """
-        query_embedding = self.embeddings.embed_query(question)
-        results = self.collection.query(
+        query_embedding = await asyncio.to_thread(self.embeddings.embed_query, question)
+        results = await asyncio.to_thread(
+            self.collection.query,
             query_embeddings=cast(Any, [query_embedding]),
             n_results=top_k,
             where={"db_id": db_id},
@@ -99,9 +102,12 @@ class SchemaRetriever:
         if metadatas is None or documents is None:
             return docs
         for i, (meta, text) in enumerate(zip(metadatas[0], documents[0], strict=False)):
-            if similarity_threshold is not None and distances is not None:
-                if distances[0][i] > similarity_threshold:
-                    continue
+            if (
+                similarity_threshold is not None
+                and distances is not None
+                and distances[0][i] > similarity_threshold
+            ):
+                continue
             docs.append(
                 _parse_schema_text(
                     text=text,

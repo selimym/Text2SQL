@@ -11,6 +11,18 @@ class SQLGenerator:
     def __init__(self, llm: BaseChatModel) -> None:
         self.llm = llm
 
+    async def agenerate(self, user_prompt: str) -> str:
+        """Async version of generate. Returns only the SQL string."""
+        messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt),
+        ]
+        response = await self.llm.ainvoke(messages)
+        sql = str(response.content).strip()
+        sql = re.sub(r"^```(?:sql)?\s*", "", sql, flags=re.IGNORECASE)
+        sql = re.sub(r"\s*```$", "", sql)
+        return sql.strip()
+
     def generate(self, user_prompt: str) -> tuple[str, dict[str, Any]]:
         """Generate SQL from a prompt. Returns (sql, usage) where usage may be empty."""
         messages = [

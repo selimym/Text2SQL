@@ -28,16 +28,23 @@ class BaselinePipeline:
         self.spider_data_dir = spider_data_dir
         self.schema_similarity_threshold = schema_similarity_threshold
 
-    def run(self, request: QueryRequest) -> QueryResponse:
-        schema_docs = self.schema_retriever.retrieve(
-            request.question, request.db_id, request.top_k_schema,
-            similarity_threshold=self.schema_similarity_threshold,
-        )
-        example_docs = self.example_retriever.retrieve(
+    async def run(self, request: QueryRequest) -> QueryResponse:
+        if self.schema_similarity_threshold is not None:
+            schema_docs = await self.schema_retriever.retrieve(
+                request.question,
+                request.db_id,
+                request.top_k_schema,
+                similarity_threshold=self.schema_similarity_threshold,
+            )
+        else:
+            schema_docs = await self.schema_retriever.retrieve(
+                request.question, request.db_id, request.top_k_schema
+            )
+        example_docs = await self.example_retriever.retrieve(
             request.question, db_id=request.db_id, top_k=request.top_k_examples
         )
         prompt = self.assembler.assemble(request.question, schema_docs, example_docs)
-        sql, usage = self.generator.generate(prompt)
+        sql = await self.generator.agenerate(prompt)
         validation = self.validator.validate(sql)
         if not validation.valid:
             return QueryResponse(
@@ -45,10 +52,9 @@ class BaselinePipeline:
                 generated_sql=sql,
                 answer="",
                 flags=["validation_failed", validation.error or ""],
-                step_timings={"usage": usage} if usage else None,
             )
         db_path = f"{self.spider_data_dir}/database/{request.db_id}/{request.db_id}.sqlite"
-        exec_result = self.executor.execute(sql, db_path)
+        exec_result = await self.executor.execute(sql, db_path)
         answer = (
             str(exec_result.rows)
             if exec_result.success
@@ -66,5 +72,4 @@ class BaselinePipeline:
                 latency_ms=exec_result.latency_ms,
                 error=exec_result.error,
             ),
-            step_timings={"usage": usage} if usage else None,
         )

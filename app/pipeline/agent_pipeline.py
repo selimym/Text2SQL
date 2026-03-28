@@ -33,9 +33,8 @@ def _extract_tool_trace(messages: list[Any]) -> list[dict[str, Any]]:
         if isinstance(msg, AIMessage) and msg.tool_calls:
             for tc in msg.tool_calls:
                 trace.append({"tool": tc["name"], "args": tc["args"]})
-        elif isinstance(msg, ToolMessage):
-            if trace:
-                trace[-1]["result"] = str(msg.content)[:300]
+        elif isinstance(msg, ToolMessage) and trace:
+            trace[-1]["result"] = str(msg.content)[:300]
     return trace
 
 
@@ -55,7 +54,7 @@ class AgentPipeline:
         tools = make_tools(self.tool_context)
         return create_react_agent(self.llm, tools, prompt=_SYSTEM_PROMPT)
 
-    def run(self, request: QueryRequest) -> QueryResponse:
+    async def run(self, request: QueryRequest) -> QueryResponse:
         start_ms = time.monotonic() * 1000
         self.tool_context.retrieved_tables.clear()
 
@@ -63,7 +62,7 @@ class AgentPipeline:
         config = {"recursion_limit": self.max_iterations * 3 + 5}
 
         try:
-            result = self._agent.invoke(
+            result = await self._agent.ainvoke(
                 {"messages": [HumanMessage(content=human_msg)]},
                 config=config,
             )
@@ -125,7 +124,7 @@ class AgentPipeline:
         db_path = (
             f"{self.tool_context.spider_data_dir}/database/{request.db_id}/{request.db_id}.sqlite"
         )
-        exec_result = self.tool_context.executor.execute(raw_sql, db_path)
+        exec_result = await self.tool_context.executor.execute(raw_sql, db_path)
 
         answer = (
             str(exec_result.rows)
@@ -147,4 +146,3 @@ class AgentPipeline:
             step_timings={"total_ms": total_ms, "tool_trace": tool_trace},
             retry_count=retry_count,
         )
-
