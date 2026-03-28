@@ -17,6 +17,11 @@ class ToolContext:
     validator: SQLValidator
     executor: SQLExecutor
     spider_data_dir: str
+    retrieved_tables: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.retrieved_tables is None:
+            self.retrieved_tables = []
 
 
 class GetSchemaInput(BaseModel):
@@ -41,14 +46,17 @@ class ExecuteSqlInput(BaseModel):
 
 
 def make_tools(context: ToolContext) -> list[BaseTool]:
-    async def _get_schema(question: str, db_id: str, top_k: int = 5) -> str:
+    def _get_schema(question: str, db_id: str, top_k: int = 5) -> str:
         """Retrieve relevant database schema for a question."""
-        docs = await context.schema_retriever.retrieve(question, db_id, top_k)
+        docs = context.schema_retriever.retrieve(question, db_id, top_k)
+        for doc in docs:
+            if doc.table_name not in context.retrieved_tables:
+                context.retrieved_tables.append(doc.table_name)
         return "\n\n".join(doc.to_text() for doc in docs) if docs else "No schema found."
 
-    async def _get_examples(question: str, db_id: str, top_k: int = 3) -> str:
+    def _get_examples(question: str, db_id: str, top_k: int = 3) -> str:
         """Retrieve similar SQL examples for a question."""
-        docs = await context.example_retriever.retrieve(question, db_id, top_k)
+        docs = context.example_retriever.retrieve(question, db_id, top_k)
         if not docs:
             return "No examples found."
         return "\n\n".join(f"Q: {doc.question}\nSQL: {doc.sql}" for doc in docs)
@@ -60,10 +68,10 @@ def make_tools(context: ToolContext) -> list[BaseTool]:
             return "valid"
         return f"invalid: {result.error}"
 
-    async def _execute_sql(sql: str, db_id: str) -> str:
+    def _execute_sql(sql: str, db_id: str) -> str:
         """Execute SQL against the database."""
         db_path = f"{context.spider_data_dir}/database/{db_id}/{db_id}.sqlite"
-        result = await context.executor.execute(sql, db_path)
+        result = context.executor.execute(sql, db_path)
         truncated = result.error == "Result truncated"
         return json.dumps(
             {
@@ -78,13 +86,13 @@ def make_tools(context: ToolContext) -> list[BaseTool]:
 
     return [
         StructuredTool.from_function(
-            coroutine=_get_schema,
+            func=_get_schema,
             name="get_schema",
             description="Retrieve relevant database schema for a question.",
             args_schema=GetSchemaInput,
         ),
         StructuredTool.from_function(
-            coroutine=_get_examples,
+            func=_get_examples,
             name="get_examples",
             description="Retrieve similar SQL examples for a question.",
             args_schema=GetExamplesInput,
@@ -96,7 +104,7 @@ def make_tools(context: ToolContext) -> list[BaseTool]:
             args_schema=ValidateSqlInput,
         ),
         StructuredTool.from_function(
-            coroutine=_execute_sql,
+            func=_execute_sql,
             name="execute_sql",
             description="Execute SQL against the database and return results.",
             args_schema=ExecuteSqlInput,
