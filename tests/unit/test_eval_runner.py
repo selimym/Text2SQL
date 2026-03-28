@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 import sqlalchemy
@@ -12,17 +12,15 @@ from app.eval.runner import run_evaluation
 @pytest.fixture
 def mock_pipeline() -> MagicMock:
     pipeline = MagicMock()
-    pipeline.run = AsyncMock(
-        return_value=QueryResponse(
-            question="How many singers?",
-            generated_sql="SELECT COUNT(*) FROM singer",
-            answer="[[3]]",
-            execution_metadata=ExecutionMetadata(
-                success=True,
-                row_count=1,
-                latency_ms=25.0,
-            ),
-        )
+    pipeline.run.return_value = QueryResponse(
+        question="How many singers?",
+        generated_sql="SELECT COUNT(*) FROM singer",
+        answer="[[3]]",
+        execution_metadata=ExecutionMetadata(
+            success=True,
+            row_count=1,
+            latency_ms=25.0,
+        ),
     )
     return pipeline
 
@@ -41,8 +39,8 @@ def spider_dir(tmp_path: Path) -> str:
     return str(tmp_path)
 
 
-async def test_eval_report_fields(mock_pipeline: MagicMock, spider_dir: str) -> None:
-    report = await run_evaluation(mock_pipeline, spider_dir)
+def test_eval_report_fields(mock_pipeline: MagicMock, spider_dir: str) -> None:
+    report = run_evaluation(mock_pipeline, spider_dir)
     assert report.total == 2
     assert report.execution_success == 2
     assert report.success_rate == 1.0
@@ -50,7 +48,7 @@ async def test_eval_report_fields(mock_pipeline: MagicMock, spider_dir: str) -> 
     assert len(report.results) == 2
 
 
-async def test_eval_report_partial_success(spider_dir: str) -> None:
+def test_eval_report_partial_success(spider_dir: str) -> None:
     pipeline = MagicMock()
     responses = [
         QueryResponse(
@@ -68,8 +66,8 @@ async def test_eval_report_partial_success(spider_dir: str) -> None:
             ),
         ),
     ]
-    pipeline.run = AsyncMock(side_effect=responses)
-    report = await run_evaluation(pipeline, spider_dir)
+    pipeline.run.side_effect = responses
+    report = run_evaluation(pipeline, spider_dir)
     assert report.total == 2
     assert report.execution_success == 1
     assert report.success_rate == 0.5
@@ -100,129 +98,81 @@ def spider_dir_with_db(tmp_path: Path) -> str:
 @pytest.fixture
 def perfect_pipeline() -> MagicMock:
     pipeline = MagicMock()
-    pipeline.run = AsyncMock(
-        return_value=QueryResponse(
-            question="How many singers?",
-            generated_sql="SELECT COUNT(*) FROM singer",
-            answer="[[1]]",
-            retrieved_schema_summary=["singer"],
-            execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
-        )
+    pipeline.run.return_value = QueryResponse(
+        question="How many singers?",
+        generated_sql="SELECT COUNT(*) FROM singer",
+        answer="[[1]]",
+        retrieved_schema_summary=["singer"],
+        execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
     )
     return pipeline
 
 
-async def test_evalreport_has_new_fields(
-    perfect_pipeline: MagicMock, spider_dir_with_db: str
-) -> None:
-    report = await run_evaluation(perfect_pipeline, spider_dir_with_db)
+def test_evalreport_has_new_fields(perfect_pipeline: MagicMock, spider_dir_with_db: str) -> None:
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
     assert hasattr(report, "execution_accuracy")
     assert hasattr(report, "exact_match_rate")
     assert hasattr(report, "avg_schema_recall")
 
 
-async def test_execution_accuracy_perfect(
-    perfect_pipeline: MagicMock, spider_dir_with_db: str
-) -> None:
-    report = await run_evaluation(perfect_pipeline, spider_dir_with_db)
+def test_execution_accuracy_perfect(perfect_pipeline: MagicMock, spider_dir_with_db: str) -> None:
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
     assert report.execution_accuracy == 1.0
 
 
-async def test_exact_match_perfect(perfect_pipeline: MagicMock, spider_dir_with_db: str) -> None:
-    report = await run_evaluation(perfect_pipeline, spider_dir_with_db)
+def test_exact_match_perfect(perfect_pipeline: MagicMock, spider_dir_with_db: str) -> None:
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
     assert report.exact_match_rate == 1.0
 
 
-async def test_schema_recall_perfect(perfect_pipeline: MagicMock, spider_dir_with_db: str) -> None:
-    report = await run_evaluation(perfect_pipeline, spider_dir_with_db)
+def test_schema_recall_perfect(perfect_pipeline: MagicMock, spider_dir_with_db: str) -> None:
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
     assert report.avg_schema_recall == 1.0
 
 
-async def test_results_contain_per_example_metrics(
+def test_results_contain_per_example_metrics(
     perfect_pipeline: MagicMock, spider_dir_with_db: str
 ) -> None:
-    report = await run_evaluation(perfect_pipeline, spider_dir_with_db)
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
     row = report.results[0]
     assert "execution_accuracy" in row
     assert "exact_match" in row
     assert "schema_recall" in row
 
 
-async def test_evalreport_has_new_precision_noise_fewshot_fields(
+def test_evalreport_has_precision_noise_fields(
     perfect_pipeline: MagicMock, spider_dir_with_db: str
 ) -> None:
-    report = await run_evaluation(perfect_pipeline, spider_dir_with_db)
+    report = run_evaluation(perfect_pipeline, spider_dir_with_db)
     assert hasattr(report, "avg_schema_precision")
     assert hasattr(report, "avg_schema_noise_ratio")
-    assert hasattr(report, "avg_fewshot_table_overlap")
 
 
-async def test_avg_schema_precision_computed_from_retrieved_schema(
-    spider_dir_with_db: str,
-) -> None:
+def test_avg_schema_precision_computed_from_retrieved_schema(spider_dir_with_db: str) -> None:
     pipeline = MagicMock()
     # retrieved_schema_summary contains 'singer', which is in gold_sql
-    pipeline.run = AsyncMock(
-        return_value=QueryResponse(
-            question="How many singers?",
-            generated_sql="SELECT COUNT(*) FROM singer",
-            answer="[[1]]",
-            retrieved_schema_summary=["singer"],
-            execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
-        )
+    pipeline.run.return_value = QueryResponse(
+        question="How many singers?",
+        generated_sql="SELECT COUNT(*) FROM singer",
+        answer="[[1]]",
+        retrieved_schema_summary=["singer"],
+        execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
     )
-    report = await run_evaluation(pipeline, spider_dir_with_db)
+    report = run_evaluation(pipeline, spider_dir_with_db)
     # precision = |{singer} & {singer}| / len([singer]) = 1/1 = 1.0
     assert report.avg_schema_precision == 1.0
 
 
-async def test_avg_fewshot_table_overlap_with_sqls(spider_dir_with_db: str) -> None:
+def test_results_contain_new_per_example_metrics(spider_dir_with_db: str) -> None:
     pipeline = MagicMock()
-    pipeline.run = AsyncMock(
-        return_value=QueryResponse(
-            question="How many singers?",
-            generated_sql="SELECT COUNT(*) FROM singer",
-            answer="[[1]]",
-            retrieved_schema_summary=["singer"],
-            retrieved_example_sqls=["SELECT * FROM singer WHERE id = 1"],
-            execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
-        )
+    pipeline.run.return_value = QueryResponse(
+        question="How many singers?",
+        generated_sql="SELECT COUNT(*) FROM singer",
+        answer="[[1]]",
+        retrieved_schema_summary=["singer"],
+        execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
     )
-    report = await run_evaluation(pipeline, spider_dir_with_db)
-    # fewshot overlap: gold tables={singer}, retrieved sql tables={singer} => 1.0
-    assert report.avg_fewshot_table_overlap == 1.0
-
-
-async def test_avg_fewshot_table_overlap_none_when_no_sqls(spider_dir_with_db: str) -> None:
-    pipeline = MagicMock()
-    # retrieved_example_sqls is None (default)
-    pipeline.run = AsyncMock(
-        return_value=QueryResponse(
-            question="How many singers?",
-            generated_sql="SELECT COUNT(*) FROM singer",
-            answer="[[1]]",
-            retrieved_schema_summary=["singer"],
-            execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
-        )
-    )
-    report = await run_evaluation(pipeline, spider_dir_with_db)
-    assert report.avg_fewshot_table_overlap == 0.0
-
-
-async def test_results_contain_new_per_example_metrics(spider_dir_with_db: str) -> None:
-    pipeline = MagicMock()
-    pipeline.run = AsyncMock(
-        return_value=QueryResponse(
-            question="How many singers?",
-            generated_sql="SELECT COUNT(*) FROM singer",
-            answer="[[1]]",
-            retrieved_schema_summary=["singer"],
-            retrieved_example_sqls=["SELECT name FROM singer"],
-            execution_metadata=ExecutionMetadata(success=True, row_count=1, latency_ms=10.0),
-        )
-    )
-    report = await run_evaluation(pipeline, spider_dir_with_db)
+    report = run_evaluation(pipeline, spider_dir_with_db)
     row = report.results[0]
     assert "schema_precision" in row
     assert "schema_noise_ratio" in row
-    assert "fewshot_table_overlap" in row
