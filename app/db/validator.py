@@ -14,7 +14,7 @@ class SQLValidator:
             return ValidationResult(valid=False, error="Empty SQL")
         try:
             statements = sqlglot.parse(sql)
-        except sqlglot.errors.ParseError as e:
+        except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
             return ValidationResult(valid=False, error=f"Parse error: {e}")
         if len(statements) != 1:
             return ValidationResult(valid=False, error="Only single statements allowed")

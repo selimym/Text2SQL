@@ -36,7 +36,7 @@ def make_pipeline(
     assembler = MagicMock()
     assembler.assemble.return_value = "assembled prompt"
     generator = MagicMock()
-    generator.agenerate = AsyncMock(return_value=sql)
+    generator.agenerate = AsyncMock(return_value=(sql, {}))
     validator = MagicMock()
     validator.validate.return_value = ValidationResult(
         valid=validation_valid,

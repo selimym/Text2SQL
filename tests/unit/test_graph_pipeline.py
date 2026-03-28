@@ -58,7 +58,7 @@ def make_services(
     llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.agenerate = AsyncMock(return_value=generated_sql)
+    generator.agenerate = AsyncMock(return_value=(generated_sql, {}))
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)
@@ -144,7 +144,7 @@ async def test_validation_fail_generation_fault() -> None:
     llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.agenerate = AsyncMock(return_value="SELECT 1")
+    generator.agenerate = AsyncMock(return_value=("SELECT 1", {}))
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)
@@ -218,7 +218,7 @@ async def test_validation_fail_retrieval_fault() -> None:
     llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.agenerate = AsyncMock(return_value="SELECT 1")
+    generator.agenerate = AsyncMock(return_value=("SELECT 1", {}))
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)
@@ -296,7 +296,7 @@ async def test_execution_fail_triggers_repair() -> None:
     llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.agenerate = AsyncMock(return_value="SELECT 1")
+    generator.agenerate = AsyncMock(return_value=("SELECT 1", {}))
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)
@@ -403,7 +403,7 @@ async def test_repair_loop_uses_assemble_prompt_not_draft() -> None:
     llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.agenerate = AsyncMock(return_value="SELECT 1")
+    generator.agenerate = AsyncMock(return_value=("SELECT 1", {}))
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)
@@ -473,7 +473,7 @@ async def test_max_retries_reached_execution() -> None:
     llm.ainvoke = AsyncMock(return_value=llm_response)
 
     generator = MagicMock(spec=SQLGenerator)
-    generator.agenerate = AsyncMock(return_value="SELECT bad")
+    generator.agenerate = AsyncMock(return_value=("SELECT bad", {}))
     generator.llm = llm
 
     validator = MagicMock(spec=SQLValidator)

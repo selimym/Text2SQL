@@ -44,7 +44,7 @@ class BaselinePipeline:
             request.question, db_id=request.db_id, top_k=request.top_k_examples
         )
         prompt = self.assembler.assemble(request.question, schema_docs, example_docs)
-        sql = await self.generator.agenerate(prompt)
+        sql, usage = await self.generator.agenerate(prompt)
         validation = self.validator.validate(sql)
         if not validation.valid:
             return QueryResponse(
@@ -52,6 +52,7 @@ class BaselinePipeline:
                 generated_sql=sql,
                 answer="",
                 flags=["validation_failed", validation.error or ""],
+                step_timings={"usage": usage} if usage else None,
             )
         db_path = f"{self.spider_data_dir}/database/{request.db_id}/{request.db_id}.sqlite"
         exec_result = await self.executor.execute(sql, db_path)
@@ -72,4 +73,5 @@ class BaselinePipeline:
                 latency_ms=exec_result.latency_ms,
                 error=exec_result.error,
             ),
+            step_timings={"usage": usage} if usage else None,
         )

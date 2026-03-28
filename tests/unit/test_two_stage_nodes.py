@@ -57,7 +57,7 @@ def make_services(**overrides: object) -> NodeServices:
     assembler.assemble.return_value = "assembled prompt"
 
     generator = MagicMock()
-    generator.agenerate = AsyncMock(return_value="SELECT COUNT(*) FROM singer")
+    generator.agenerate = AsyncMock(return_value=("SELECT COUNT(*) FROM singer", {}))
 
     validator = MagicMock()
     validator.validate.return_value = ValidationResult(valid=True)

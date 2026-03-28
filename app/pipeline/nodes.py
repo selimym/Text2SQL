@@ -168,9 +168,11 @@ async def assemble_draft_prompt_node(state: PipelineState, services: NodeService
 async def generate_draft_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     assembled_prompt = state.get("assembled_prompt") or ""
-    draft_sql = await services.generator.agenerate(assembled_prompt)
+    draft_sql, usage = await services.generator.agenerate(assembled_prompt)
     elapsed_ms = (time.monotonic() - start) * 1000
-    timings = _merge_timings(state, "generate_draft_sql_ms", elapsed_ms)
+    timings: dict[str, Any] = _merge_timings(state, "generate_draft_sql_ms", elapsed_ms)
+    if usage:
+        timings["draft_usage"] = usage
     return _new_state(
         state,
         draft_sql=draft_sql,
@@ -228,9 +230,11 @@ async def refine_schema_context_node(state: PipelineState, services: NodeService
 async def generate_final_sql_node(state: PipelineState, services: NodeServices) -> PipelineState:
     start = time.monotonic()
     assembled_prompt = state.get("assembled_prompt") or ""
-    generated_sql = await services.generator.agenerate(assembled_prompt)
+    generated_sql, usage = await services.generator.agenerate(assembled_prompt)
     elapsed_ms = (time.monotonic() - start) * 1000
-    timings = _merge_timings(state, "generate_final_sql_ms", elapsed_ms)
+    timings: dict[str, Any] = _merge_timings(state, "generate_final_sql_ms", elapsed_ms)
+    if usage:
+        timings["final_usage"] = usage
     return _new_state(
         state,
         generated_sql=generated_sql,
