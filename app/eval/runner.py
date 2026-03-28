@@ -2,7 +2,9 @@
 
 import argparse
 import asyncio
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import structlog
 
@@ -10,7 +12,6 @@ from app.api.models import QueryRequest
 from app.db.executor import SQLExecutor
 from app.eval.loader import load_dev_subset
 from app.eval.metrics import (
-    fewshot_table_overlap,
     normalized_exact_match,
     result_set_match,
     schema_noise_ratio,
@@ -34,10 +35,9 @@ class EvalReport:
     results: list[dict]  # type: ignore[type-arg]
     avg_schema_precision: float = 0.0
     avg_schema_noise_ratio: float = 0.0
-    avg_fewshot_table_overlap: float = 0.0
 
 
-async def run_evaluation(
+def run_evaluation(
     pipeline: Pipeline,
     spider_data_dir: str,
     db_filter: list[str] | None = None,
@@ -45,98 +45,224 @@ async def run_evaluation(
 ) -> EvalReport:
     """Run evaluation against Spider dev set and return an EvalReport."""
     examples = load_dev_subset(spider_data_dir, db_filter, limit)
-    results = []
-    total_latency = 0.0
-    successes = 0
-    exec_acc_total = 0
-    em_total = 0
-    recall_total = 0.0
-    precision_total = 0.0
-    noise_total = 0.0
-    fewshot_total = 0.0
     executor = SQLExecutor()
+    results = []
 
     for ex in examples:
         req = QueryRequest(question=ex.question, db_id=ex.db_id)
-        resp = await pipeline.run(req)
+        resp = pipeline.run(req)
         success = resp.execution_metadata is not None and resp.execution_metadata.success
         latency = resp.execution_metadata.latency_ms if resp.execution_metadata else 0.0
-        if success:
-            successes += 1
-        total_latency += latency
 
-        # Execute gold SQL to compare result sets
         db_path = f"{spider_data_dir}/database/{ex.db_id}/{ex.db_id}.sqlite"
-        gold_result = await executor.execute(ex.gold_sql, db_path)
+        gold_result = executor.execute(ex.gold_sql, db_path)
         if not gold_result.success:
-            _log.warning(
-                "gold_sql execution failed",
-                db_id=ex.db_id,
-                error=gold_result.error,
-            )
-        gen_result = (
-            await executor.execute(resp.generated_sql, db_path) if resp.generated_sql else None
-        )
-
-        exec_acc = (
-            result_set_match(gen_result.rows, gold_result.rows)
-            if gen_result and gen_result.success and gold_result.success
-            else False
-        )
-        em = (
-            normalized_exact_match(resp.generated_sql, ex.gold_sql) if resp.generated_sql else False
-        )
-        recall = schema_recall(ex.gold_sql, resp.retrieved_schema_summary or [])
-        precision = schema_precision(ex.gold_sql, resp.retrieved_schema_summary or [])
-        noise = schema_noise_ratio(ex.gold_sql, resp.retrieved_schema_summary or [])
-        fewshot = (
-            fewshot_table_overlap(ex.gold_sql, resp.retrieved_example_sqls)
-            if resp.retrieved_example_sqls
-            else 0.0
-        )
-
-        if exec_acc:
-            exec_acc_total += 1
-        if em:
-            em_total += 1
-        recall_total += recall
-        precision_total += precision
-        noise_total += noise
-        fewshot_total += fewshot
+            _log.warning("gold_sql execution failed", db_id=ex.db_id, error=gold_result.error)
+        gen_result = executor.execute(resp.generated_sql, db_path) if resp.generated_sql else None
 
         results.append(
-            {
-                "question": ex.question,
-                "db_id": ex.db_id,
-                "gold_sql": ex.gold_sql,
-                "generated_sql": resp.generated_sql,
-                "success": success,
-                "execution_accuracy": exec_acc,
-                "exact_match": em,
-                "schema_recall": recall,
-                "schema_precision": precision,
-                "schema_noise_ratio": noise,
-                "fewshot_table_overlap": fewshot,
-            }
+            _compute_result_metrics(
+                ex_question=ex.question,
+                ex_db_id=ex.db_id,
+                ex_gold_sql=ex.gold_sql,
+                generated_sql=resp.generated_sql,
+                success=success,
+                latency=latency,
+                gen_rows=gen_result.rows if gen_result and gen_result.success else None,
+                gold_rows=gold_result.rows if gold_result.success else None,
+                gold_ok=gold_result.success,
+                retrieved_schema=resp.retrieved_schema_summary or [],
+                retry_count=resp.retry_count,
+                flags=resp.flags or None,
+                step_timings=resp.step_timings,
+            )
         )
 
-    n = len(examples)
+    return _aggregate(results)
+
+
+def _compute_result_metrics(
+    ex_question: str,
+    ex_db_id: str,
+    ex_gold_sql: str,
+    generated_sql: str,
+    success: bool,
+    latency: float,
+    gen_rows: list | None,
+    gold_rows: list | None,
+    gold_ok: bool,
+    retrieved_schema: list[str],
+    retry_count: int | None = None,
+    flags: list[str] | None = None,
+    step_timings: dict | None = None,
+) -> dict:  # type: ignore[type-arg]
+    exec_acc = (
+        result_set_match(gen_rows, gold_rows)
+        if gen_rows is not None and gold_ok
+        else False
+    )
+    em = normalized_exact_match(generated_sql, ex_gold_sql) if generated_sql else False
+    recall = schema_recall(ex_gold_sql, retrieved_schema)
+    precision = schema_precision(ex_gold_sql, retrieved_schema)
+    noise = schema_noise_ratio(ex_gold_sql, retrieved_schema)
+    row: dict = {  # type: ignore[type-arg]
+        "question": ex_question,
+        "db_id": ex_db_id,
+        "gold_sql": ex_gold_sql,
+        "generated_sql": generated_sql,
+        "success": success,
+        "latency_ms": latency,
+        "execution_accuracy": exec_acc,
+        "exact_match": em,
+        "schema_recall": recall,
+        "schema_precision": precision,
+        "schema_noise_ratio": noise,
+    }
+    if retry_count is not None:
+        row["retry_count"] = retry_count
+    if flags:
+        row["flags"] = flags
+    if step_timings:
+        row["step_timings"] = step_timings
+    return row
+
+
+def _aggregate(results: list[dict]) -> EvalReport:  # type: ignore[type-arg]
+    n = len(results)
+    if n == 0:
+        return EvalReport(
+            total=0, execution_success=0, success_rate=0.0, avg_latency_ms=0.0,
+            execution_accuracy=0.0, exact_match_rate=0.0, avg_schema_recall=0.0,
+            results=[], avg_schema_precision=0.0, avg_schema_noise_ratio=0.0,
+        )
+    successes = sum(1 for r in results if r["success"])
+    exec_acc_total = sum(1 for r in results if r["execution_accuracy"])
+    em_total = sum(1 for r in results if r["exact_match"])
+    total_latency = sum(r.get("latency_ms", 0.0) for r in results)
+    recall_total = sum(r["schema_recall"] for r in results)
+    precision_total = sum(r["schema_precision"] for r in results)
+    noise_total = sum(r["schema_noise_ratio"] for r in results)
     return EvalReport(
         total=n,
         execution_success=successes,
-        success_rate=successes / n if n else 0.0,
-        avg_latency_ms=total_latency / n if n else 0.0,
-        execution_accuracy=exec_acc_total / n if n else 0.0,
-        exact_match_rate=em_total / n if n else 0.0,
-        avg_schema_recall=recall_total / n if n else 0.0,
+        success_rate=successes / n,
+        avg_latency_ms=total_latency / n,
+        execution_accuracy=exec_acc_total / n,
+        exact_match_rate=em_total / n,
+        avg_schema_recall=recall_total / n,
         results=results,
-        avg_schema_precision=precision_total / n if n else 0.0,
-        avg_schema_noise_ratio=noise_total / n if n else 0.0,
-        avg_fewshot_table_overlap=fewshot_total / n if n else 0.0,
+        avg_schema_precision=precision_total / n,
+        avg_schema_noise_ratio=noise_total / n,
     )
 
 
-async def _main() -> None:
+async def run_evaluation_async(
+    pipeline: Pipeline,
+    spider_data_dir: str,
+    db_filter: list[str] | None = None,
+    limit: int | None = None,
+    concurrency: int = 8,
+    checkpoint_path: Path | None = None,
+    batch_size: int = 50,
+) -> EvalReport:
+    """Run evaluation concurrently with checkpoint/resume support.
+
+    Uses asyncio.to_thread to run sync pipeline.run() calls in parallel.
+    Examples are processed in batches of `batch_size`; each batch is written
+    to the checkpoint file atomically after all its examples complete.
+    On resume, skips examples already present in the checkpoint file.
+    """
+    examples = load_dev_subset(spider_data_dir, db_filter, limit)
+    executor = SQLExecutor()
+
+    # Load checkpoint if it exists
+    done_results: list[dict] = []  # type: ignore[type-arg]
+    done_keys: set[tuple[str, str]] = set()
+    if checkpoint_path and checkpoint_path.exists():
+        for line in checkpoint_path.read_text().splitlines():
+            line = line.strip()
+            if line:
+                row = json.loads(line)
+                done_results.append(row)
+                done_keys.add((row["question"], row["db_id"]))
+        _log.info(
+            "checkpoint_loaded",
+            path=str(checkpoint_path),
+            already_done=len(done_results),
+            total=len(examples),
+        )
+
+    todo = [ex for ex in examples if (ex.question, ex.db_id) not in done_keys]
+    _log.info("eval_starting", todo=len(todo), skipped=len(done_results), total=len(examples))
+
+    if not todo:
+        _log.info("all_examples_already_done", total=len(done_results))
+        return _aggregate(done_results)
+
+    if checkpoint_path:
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    sem = asyncio.Semaphore(concurrency)
+    new_results: list[dict] = []  # type: ignore[type-arg]
+
+    async def process_one(ex) -> dict:  # type: ignore[type-arg]
+        async with sem:
+            req = QueryRequest(question=ex.question, db_id=ex.db_id)
+            resp = await asyncio.to_thread(pipeline.run, req)
+
+            success = resp.execution_metadata is not None and resp.execution_metadata.success
+            latency = resp.execution_metadata.latency_ms if resp.execution_metadata else 0.0
+
+            db_path = f"{spider_data_dir}/database/{ex.db_id}/{ex.db_id}.sqlite"
+            gold_result = await asyncio.to_thread(executor.execute, ex.gold_sql, db_path)
+            if not gold_result.success:
+                _log.warning("gold_sql_failed", db_id=ex.db_id, error=gold_result.error)
+
+            gen_result = (
+                await asyncio.to_thread(executor.execute, resp.generated_sql, db_path)
+                if resp.generated_sql
+                else None
+            )
+
+            return _compute_result_metrics(
+                ex_question=ex.question,
+                ex_db_id=ex.db_id,
+                ex_gold_sql=ex.gold_sql,
+                generated_sql=resp.generated_sql,
+                success=success,
+                latency=latency,
+                gen_rows=gen_result.rows if gen_result and gen_result.success else None,
+                gold_rows=gold_result.rows if gold_result.success else None,
+                gold_ok=gold_result.success,
+                retrieved_schema=resp.retrieved_schema_summary or [],
+                retry_count=resp.retry_count,
+                flags=resp.flags or None,
+                step_timings=resp.step_timings,
+            )
+
+    # Process in batches: gather each batch, write checkpoint, then continue
+    for batch_start in range(0, len(todo), batch_size):
+        batch = todo[batch_start : batch_start + batch_size]
+        batch_results = await asyncio.gather(*[process_one(ex) for ex in batch])
+        new_results.extend(batch_results)
+
+        if checkpoint_path:
+            with checkpoint_path.open("a") as f:
+                for row in batch_results:
+                    f.write(json.dumps(row) + "\n")
+
+        completed = len(done_results) + len(new_results)
+        _log.info(
+            "batch_done",
+            completed=completed,
+            total=len(examples),
+            batch_exec_acc=sum(r["execution_accuracy"] for r in batch_results) / len(batch_results),
+        )
+
+    return _aggregate(done_results + new_results)
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run offline evaluation")
     parser.add_argument("--split", default="dev")
     parser.add_argument("--limit", type=int, default=50)
@@ -155,7 +281,3 @@ async def _main() -> None:
         "Metrics reported: execution_success, execution_accuracy, exact_match_rate, "
         "avg_schema_recall, avg_schema_precision, avg_schema_noise_ratio, avg_fewshot_table_overlap"
     )
-
-
-if __name__ == "__main__":
-    asyncio.run(_main())
