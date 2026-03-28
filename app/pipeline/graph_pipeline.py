@@ -118,10 +118,10 @@ class DeterministicGraphPipeline:
 
         return graph.compile()
 
-    async def run(self, request: QueryRequest) -> QueryResponse:
+    def run(self, request: QueryRequest) -> QueryResponse:
         initial_state: PipelineState = {"request": request}
         config = {"recursion_limit": self._recursion_limit}
-        final_state = await self._compiled.ainvoke(initial_state, config=config)
+        final_state = self._compiled.invoke(initial_state, config=config)
 
         exec_result = final_state.get("execution_result")
         gen_sql = final_state.get("generated_sql", "")
@@ -149,7 +149,6 @@ class DeterministicGraphPipeline:
 
         schema_docs = final_state.get("schema_docs", [])
         example_docs = final_state.get("example_docs", [])
-        retrieved_example_sqls = [e.sql for e in example_docs]
 
         execution_metadata = None
         if exec_result:
@@ -169,7 +168,6 @@ class DeterministicGraphPipeline:
             answer=answer,
             retrieved_schema_summary=[d.table_name for d in schema_docs],
             retrieved_examples_summary=[e.question for e in example_docs],
-            retrieved_example_sqls=retrieved_example_sqls,
             execution_metadata=execution_metadata,
             step_timings=step_timings,
             retry_count=retry_count,
