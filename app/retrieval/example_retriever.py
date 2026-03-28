@@ -1,4 +1,3 @@
-import asyncio
 from typing import Any, cast
 
 from chromadb.api import ClientAPI
@@ -17,7 +16,8 @@ class ExampleRetriever:
         self.embeddings = embeddings
         self.collection = chroma_client.get_or_create_collection(collection_name)
 
-    def _index_sync(self, docs: list[ExampleDocument]) -> None:
+    def index(self, docs: list[ExampleDocument], batch_size: int = 500) -> None:
+        """Index example documents into ChromaDB."""
         if not docs:
             return
         texts = [doc.to_text() for doc in docs]
@@ -25,18 +25,17 @@ class ExampleRetriever:
         ids = [f"{doc.db_id}_{i}_{doc.question[:30]}" for i, doc in enumerate(docs)]
         raw_embeddings = self.embeddings.embed_documents(texts)
         embeddings = raw_embeddings[: len(ids)]
-        self.collection.upsert(
-            ids=ids,
-            embeddings=cast(Any, embeddings),
-            documents=texts,
-            metadatas=cast(Any, metadatas),
-        )
+        for start in range(0, len(ids), batch_size):
+            end = start + batch_size
+            self.collection.upsert(
+                ids=ids[start:end],
+                embeddings=cast(Any, embeddings[start:end]),
+                documents=texts[start:end],
+                metadatas=cast(Any, metadatas[start:end]),
+            )
 
-    async def index(self, docs: list[ExampleDocument]) -> None:
-        """Index example documents into ChromaDB."""
-        await asyncio.to_thread(self._index_sync, docs)
-
-    def _retrieve_sync(self, question: str, db_id: str | None, top_k: int) -> list[ExampleDocument]:
+    def retrieve(self, question: str, db_id: str | None, top_k: int) -> list[ExampleDocument]:
+        """Retrieve top-k example documents relevant to the question."""
         query_embedding = self.embeddings.embed_query(question)
         where = {"db_id": db_id} if db_id is not None else None
         results = self.collection.query(
@@ -56,7 +55,3 @@ class ExampleRetriever:
                 )
             )
         return docs
-
-    async def retrieve(self, question: str, db_id: str | None, top_k: int) -> list[ExampleDocument]:
-        """Retrieve top-k example documents relevant to the question."""
-        return await asyncio.to_thread(self._retrieve_sync, question, db_id, top_k)
