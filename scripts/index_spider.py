@@ -1,11 +1,13 @@
 """CLI script to index Spider training data into ChromaDB."""
 
 import argparse
+import asyncio
 import json
 from pathlib import Path
 
 import chromadb
 import sqlglot
+from sqlglot import expressions as _sqlglot_exp
 
 from app.core.config import get_settings
 from app.db.spider_loader import load_schema_documents_from_spider
@@ -21,7 +23,7 @@ def extract_tables_from_sql(sql: str) -> list[str]:
         tables: list[str] = []
         for expr in sqlglot.parse(sql):
             if expr is not None:
-                for table in expr.find_all(sqlglot.exp.Table):
+                for table in expr.find_all(_sqlglot_exp.Table):
                     if table.name:
                         tables.append(table.name.lower())
         return list(set(tables))
@@ -29,7 +31,7 @@ def extract_tables_from_sql(sql: str) -> list[str]:
         return []
 
 
-def main() -> None:
+async def main() -> None:
     parser = argparse.ArgumentParser(description="Index Spider data into ChromaDB")
     parser.add_argument(
         "--spider-dir",
@@ -59,7 +61,7 @@ def main() -> None:
         collection_name="spider_schemas",
         chroma_client=chroma_client,
     )
-    schema_retriever.index(schema_docs)
+    await schema_retriever.index(schema_docs)
     print(f"Indexed {len(schema_docs)} schema documents into ChromaDB")
 
     # Index example documents
@@ -88,10 +90,10 @@ def main() -> None:
         collection_name="spider_examples",
         chroma_client=chroma_client,
     )
-    example_retriever.index(example_docs)
+    await example_retriever.index(example_docs)
     print(f"Indexed {len(example_docs)} training examples into ChromaDB")
     print("\nIndexing complete!")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

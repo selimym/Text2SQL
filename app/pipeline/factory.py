@@ -21,6 +21,7 @@ def build_pipeline(
     executor: SQLExecutor,
     spider_data_dir: str,
     variant: Literal["baseline", "deterministic", "agent"] = "baseline",
+    schema_similarity_threshold: float | None = None,
 ) -> Pipeline:
     if variant == "baseline":
         return BaselinePipeline(
@@ -31,6 +32,7 @@ def build_pipeline(
             validator=validator,
             executor=executor,
             spider_data_dir=spider_data_dir,
+            schema_similarity_threshold=schema_similarity_threshold,
         )
     elif variant == "deterministic":
         from app.pipeline.graph_pipeline import DeterministicGraphPipeline
@@ -45,6 +47,7 @@ def build_pipeline(
             executor=executor,
             spider_data_dir=spider_data_dir,
             llm=generator.llm,
+            schema_similarity_threshold=schema_similarity_threshold,
         )
         return DeterministicGraphPipeline(services=services, max_retries=2)
     elif variant == "agent":

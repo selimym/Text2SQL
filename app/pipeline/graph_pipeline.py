@@ -46,14 +46,16 @@ class DeterministicGraphPipeline:
             return "assemble_draft_prompt"
 
         def route_after_validate(state: PipelineState) -> str:
-            if state["validation_result"].valid:
+            validation_result = state.get("validation_result")
+            if validation_result is not None and validation_result.valid:
                 return "execute_sql"
             if state.get("retry_count", 0) >= max_retries:
                 return "build_response"
             return "critique_failure"
 
         def route_after_execute(state: PipelineState) -> str:
-            if state["execution_result"].success:
+            execution_result = state.get("execution_result")
+            if execution_result is not None and execution_result.success:
                 return "build_response"
             if state.get("retry_count", 0) >= max_retries:
                 return "build_response"
@@ -149,7 +151,6 @@ class DeterministicGraphPipeline:
 
         schema_docs = final_state.get("schema_docs", [])
         example_docs = final_state.get("example_docs", [])
-        retrieved_example_sqls = [e.sql for e in example_docs]
 
         execution_metadata = None
         if exec_result:
@@ -169,7 +170,6 @@ class DeterministicGraphPipeline:
             answer=answer,
             retrieved_schema_summary=[d.table_name for d in schema_docs],
             retrieved_examples_summary=[e.question for e in example_docs],
-            retrieved_example_sqls=retrieved_example_sqls,
             execution_metadata=execution_metadata,
             step_timings=step_timings,
             retry_count=retry_count,

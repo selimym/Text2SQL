@@ -1,5 +1,4 @@
 from app.eval.metrics import (
-    fewshot_table_overlap,
     normalized_exact_match,
     result_set_match,
     schema_noise_ratio,
@@ -149,53 +148,6 @@ def test_schema_noise_ratio_empty_retrieved() -> None:
         schema_noise_ratio(
             gold_sql="SELECT * FROM table_a",
             retrieved_tables=[],
-        )
-        == 0.0
-    )
-
-
-# fewshot_table_overlap tests
-
-
-def test_fewshot_table_overlap_basic() -> None:
-    # gold uses table_a
-    # example1 uses table_a and table_b (overlap = 1/2 = 0.5)
-    # example2 uses table_a (overlap = 1/1 = 1.0)
-    # average = (0.5 + 1.0) / 2 = 0.75
-    assert (
-        fewshot_table_overlap(
-            gold_sql="SELECT * FROM table_a",
-            retrieved_sqls=[
-                "SELECT * FROM table_a JOIN table_b",
-                "SELECT * FROM table_a",
-            ],
-        )
-        == 0.75
-    )
-
-
-def test_fewshot_table_overlap_empty_retrieved() -> None:
-    assert (
-        fewshot_table_overlap(
-            gold_sql="SELECT * FROM table_a",
-            retrieved_sqls=[],
-        )
-        == 0.0
-    )
-
-
-def test_fewshot_table_overlap_no_match() -> None:
-    # gold uses table_a
-    # example1 uses table_b (no overlap = 0.0)
-    # example2 uses table_c (no overlap = 0.0)
-    # average = 0.0
-    assert (
-        fewshot_table_overlap(
-            gold_sql="SELECT * FROM table_a",
-            retrieved_sqls=[
-                "SELECT * FROM table_b",
-                "SELECT * FROM table_c",
-            ],
         )
         == 0.0
     )

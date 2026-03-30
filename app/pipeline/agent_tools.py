@@ -17,6 +17,11 @@ class ToolContext:
     validator: SQLValidator
     executor: SQLExecutor
     spider_data_dir: str
+    retrieved_tables: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.retrieved_tables is None:
+            self.retrieved_tables = []
 
 
 class GetSchemaInput(BaseModel):
@@ -44,6 +49,9 @@ def make_tools(context: ToolContext) -> list[BaseTool]:
     async def _get_schema(question: str, db_id: str, top_k: int = 5) -> str:
         """Retrieve relevant database schema for a question."""
         docs = await context.schema_retriever.retrieve(question, db_id, top_k)
+        for doc in docs:
+            if doc.table_name not in context.retrieved_tables:
+                context.retrieved_tables.append(doc.table_name)
         return "\n\n".join(doc.to_text() for doc in docs) if docs else "No schema found."
 
     async def _get_examples(question: str, db_id: str, top_k: int = 3) -> str:

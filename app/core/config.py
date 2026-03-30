@@ -25,6 +25,7 @@ class AppSettings(BaseSettings):
     langsmith_project: str = "text2sql"
     max_schema_docs: int = 10
     max_example_docs: int = 5
+    schema_similarity_threshold: float | None = None
 
 
 @functools.lru_cache

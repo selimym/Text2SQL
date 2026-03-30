@@ -1,5 +1,7 @@
 import sqlglot
 from pydantic import BaseModel
+from sqlglot import expressions as _sqlglot_exp
+from sqlglot.errors import ParseError, TokenError
 
 
 class ValidationResult(BaseModel):
@@ -14,12 +16,12 @@ class SQLValidator:
             return ValidationResult(valid=False, error="Empty SQL")
         try:
             statements = sqlglot.parse(sql)
-        except sqlglot.errors.ParseError as e:
+        except (ParseError, TokenError) as e:
             return ValidationResult(valid=False, error=f"Parse error: {e}")
         if len(statements) != 1:
             return ValidationResult(valid=False, error="Only single statements allowed")
         stmt = statements[0]
-        if not isinstance(stmt, sqlglot.exp.Select):
+        if not isinstance(stmt, _sqlglot_exp.Select):
             return ValidationResult(
                 valid=False,
                 error=f"Only SELECT allowed, got: {type(stmt).__name__}",
