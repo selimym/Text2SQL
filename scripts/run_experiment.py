@@ -6,7 +6,7 @@ import asyncio
 import csv
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
 
@@ -18,7 +18,7 @@ from app.core.llm import get_llm
 from app.core.logging import configure_logging
 from app.db.executor import SQLExecutor
 from app.db.validator import SQLValidator
-from app.eval.experiment import ComparisonReport, compare_variants, compare_variants_async
+from app.eval.experiment import ComparisonReport, compare_variants_async
 from app.llm.generator import SQLGenerator
 from app.pipeline.assembler import PromptAssembler
 from app.pipeline.factory import build_pipeline
@@ -108,10 +108,19 @@ def setup_langsmith(project: str | None) -> None:
 
 
 CSV_FIELDS = [
-    "run_date", "variant", "limit", "db_filter", "similarity_threshold",
-    "execution_accuracy", "exact_match_rate", "success_rate",
-    "avg_schema_recall", "avg_schema_precision", "avg_schema_noise_ratio",
-    "wall_clock_seconds", "report_file",
+    "run_date",
+    "variant",
+    "limit",
+    "db_filter",
+    "similarity_threshold",
+    "execution_accuracy",
+    "exact_match_rate",
+    "success_rate",
+    "avg_schema_recall",
+    "avg_schema_precision",
+    "avg_schema_noise_ratio",
+    "wall_clock_seconds",
+    "report_file",
 ]
 
 
@@ -123,21 +132,25 @@ def append_csv(report: ComparisonReport, report_file: str, csv_path: str = "resu
             writer.writeheader()
         for vr in report.variants:
             r = vr.report
-            writer.writerow({
-                "run_date": report.run_date,
-                "variant": vr.variant,
-                "limit": report.limit,
-                "db_filter": "|".join(report.db_filter) if report.db_filter else "",
-                "similarity_threshold": report.similarity_threshold if report.similarity_threshold is not None else "",
-                "execution_accuracy": r.execution_accuracy,
-                "exact_match_rate": r.exact_match_rate,
-                "success_rate": r.success_rate,
-                "avg_schema_recall": r.avg_schema_recall,
-                "avg_schema_precision": r.avg_schema_precision,
-                "avg_schema_noise_ratio": r.avg_schema_noise_ratio,
-                "wall_clock_seconds": round(vr.wall_clock_seconds, 1),
-                "report_file": report_file,
-            })
+            writer.writerow(
+                {
+                    "run_date": report.run_date,
+                    "variant": vr.variant,
+                    "limit": report.limit,
+                    "db_filter": "|".join(report.db_filter) if report.db_filter else "",
+                    "similarity_threshold": report.similarity_threshold
+                    if report.similarity_threshold is not None
+                    else "",
+                    "execution_accuracy": r.execution_accuracy,
+                    "exact_match_rate": r.exact_match_rate,
+                    "success_rate": r.success_rate,
+                    "avg_schema_recall": r.avg_schema_recall,
+                    "avg_schema_precision": r.avg_schema_precision,
+                    "avg_schema_noise_ratio": r.avg_schema_noise_ratio,
+                    "wall_clock_seconds": round(vr.wall_clock_seconds, 1),
+                    "report_file": report_file,
+                }
+            )
 
 
 def print_summary_table(report: ComparisonReport) -> None:
@@ -177,7 +190,7 @@ async def _async_main(args: argparse.Namespace) -> int:
     configure_logging(settings.log_level)
 
     output_path = args.output or (
-        f"experiment_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+        f"experiment_report_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.json"
     )
 
     # Similarity threshold: CLI arg takes precedence over .env setting
@@ -238,8 +251,13 @@ async def _async_main(args: argparse.Namespace) -> int:
             return 1
 
     _log.info(
-        "starting_experiment", variants=args.variants, limit=args.limit, db_filter=args.db_filter,
-        concurrency=args.concurrency, batch_size=args.batch_size, checkpoint_dir=args.checkpoint_dir,
+        "starting_experiment",
+        variants=args.variants,
+        limit=args.limit,
+        db_filter=args.db_filter,
+        concurrency=args.concurrency,
+        batch_size=args.batch_size,
+        checkpoint_dir=args.checkpoint_dir,
     )
 
     checkpoint_dir = Path(args.checkpoint_dir)

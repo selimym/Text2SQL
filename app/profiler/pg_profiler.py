@@ -45,7 +45,7 @@ def run_explain_analyze(
     try:
         with psycopg.connect(postgres_url) as conn, conn.cursor() as cur:
             cur.execute(psql.SQL("SET search_path TO {}").format(psql.Identifier(search_path)))
-            cur.execute(f"EXPLAIN ANALYZE {transpiled}")
+            cur.execute(psql.SQL("EXPLAIN ANALYZE ") + psql.SQL(transpiled or ""))  # pyright: ignore[reportArgumentType]
             rows = cur.fetchall()
         explain_text = "\n".join(r[0] for r in rows)
         return ProfilingResult(

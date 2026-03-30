@@ -6,6 +6,7 @@ from typing import Any
 
 import sqlglot
 import structlog
+from sqlglot import expressions as _sqlglot_exp
 
 _log = structlog.get_logger()
 
@@ -17,10 +18,10 @@ def _extract_tables(sql: str) -> set[str]:
         for stmt in sqlglot.parse(sql):
             if stmt is not None:
                 cte_aliases: set[str] = set()
-                for cte in stmt.find_all(sqlglot.exp.CTE):
+                for cte in stmt.find_all(_sqlglot_exp.CTE):
                     if cte.alias:
                         cte_aliases.add(cte.alias.lower())
-                for tbl in stmt.find_all(sqlglot.exp.Table):
+                for tbl in stmt.find_all(_sqlglot_exp.Table):
                     if tbl.name and tbl.name.lower() not in cte_aliases:
                         tables.add(tbl.name.lower())
     except Exception as exc:
@@ -76,5 +77,3 @@ def schema_noise_ratio(gold_sql: str, retrieved_tables: list[str]) -> float:
     if not retrieved_tables:
         return 0.0
     return 1.0 - schema_precision(gold_sql, retrieved_tables)
-
-

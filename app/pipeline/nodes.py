@@ -11,11 +11,12 @@ import os
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
 import sqlglot
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
+from sqlglot import expressions as _sqlglot_exp
 
 from app.api.models import ExecutionMetadata, QueryResponse
 from app.core.config import get_settings
@@ -191,10 +192,10 @@ async def refine_schema_context_node(state: PipelineState, services: NodeService
         for stmt in sqlglot.parse(draft_sql):
             if stmt is not None:
                 cte_aliases: set[str] = set()
-                for cte in stmt.find_all(sqlglot.exp.CTE):
+                for cte in stmt.find_all(_sqlglot_exp.CTE):
                     if cte.alias:
                         cte_aliases.add(cte.alias.lower())
-                for tbl in stmt.find_all(sqlglot.exp.Table):
+                for tbl in stmt.find_all(_sqlglot_exp.Table):
                     if tbl.name and tbl.name.lower() not in cte_aliases:
                         mentioned_tables.add(tbl.name.lower())
 
@@ -361,6 +362,9 @@ async def build_response_node(state: PipelineState, services: NodeServices) -> P
     return _new_state(state, flags=flags)
 
 
+_NodeFn: TypeAlias = Callable[[PipelineState, NodeServices], Coroutine[Any, Any, PipelineState]]  # noqa: UP040
+
+
 def bind_nodes(
     services: NodeServices,
 ) -> dict[str, Callable[[PipelineState], Coroutine[Any, Any, PipelineState]]]:
@@ -370,8 +374,7 @@ def bind_nodes(
     module requires ``services``, each one is wrapped in an async closure that pre-fills the
     ``services`` argument.  Using this helper is the only sanctioned way to register nodes.
     """
-    NodeFn = Callable[[PipelineState, NodeServices], Coroutine[Any, Any, PipelineState]]
-    node_fns: list[tuple[str, NodeFn]] = [
+    node_fns: list[tuple[str, _NodeFn]] = [
         ("retrieve_schema", retrieve_schema_node),
         ("retrieve_examples", retrieve_examples_node),
         ("assemble_prompt", assemble_prompt_node),
@@ -387,7 +390,7 @@ def bind_nodes(
     ]
 
     def _make_bound(
-        fn: NodeFn, svc: NodeServices
+        fn: _NodeFn, svc: NodeServices
     ) -> Callable[[PipelineState], Coroutine[Any, Any, PipelineState]]:
         async def bound(state: PipelineState) -> PipelineState:
             return await fn(state, svc)

@@ -46,14 +46,16 @@ class DeterministicGraphPipeline:
             return "assemble_draft_prompt"
 
         def route_after_validate(state: PipelineState) -> str:
-            if state["validation_result"].valid:
+            validation_result = state.get("validation_result")
+            if validation_result is not None and validation_result.valid:
                 return "execute_sql"
             if state.get("retry_count", 0) >= max_retries:
                 return "build_response"
             return "critique_failure"
 
         def route_after_execute(state: PipelineState) -> str:
-            if state["execution_result"].success:
+            execution_result = state.get("execution_result")
+            if execution_result is not None and execution_result.success:
                 return "build_response"
             if state.get("retry_count", 0) >= max_retries:
                 return "build_response"

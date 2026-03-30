@@ -7,6 +7,7 @@ from pathlib import Path
 
 import chromadb
 import sqlglot
+from sqlglot import expressions as _sqlglot_exp
 
 from app.core.config import get_settings
 from app.db.spider_loader import load_schema_documents_from_spider
@@ -22,7 +23,7 @@ def extract_tables_from_sql(sql: str) -> list[str]:
         tables: list[str] = []
         for expr in sqlglot.parse(sql):
             if expr is not None:
-                for table in expr.find_all(sqlglot.exp.Table):
+                for table in expr.find_all(_sqlglot_exp.Table):
                     if table.name:
                         tables.append(table.name.lower())
         return list(set(tables))
